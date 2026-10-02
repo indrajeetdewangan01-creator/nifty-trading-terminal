@@ -3,19 +3,18 @@ import sys
 from datetime import datetime
 
 try:
-    from flask import Flask, jsonify, send_file, request
+    from flask import Flask, jsonify, send_file, request, render_template
     import yfinance as yf
     import pandas as pd
     import numpy as np
 except ImportError:
     os.system(f"{sys.executable} -m pip install flask yfinance pandas numpy")
-    from flask import Flask, jsonify, send_file, request
+    from flask import Flask, jsonify, send_file, request, render_template
     import yfinance as yf
     import pandas as pd
     import numpy as np
 
 app = Flask(__name__, template_folder='.')
-desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
 
 # --- GLOBAL STATE FOR LOCKING & TRADE HISTORY TRACKING ---
 trade_state = {
@@ -41,17 +40,17 @@ trade_stats = {
 
 @app.route('/')
 def home():
-    html_file = os.path.join(desktop_path, "nifty_50_trading_terminal.html")
-    if os.path.exists(html_file):
-        return send_file(html_file)
-    return "Trading Terminal HTML file not found on Desktop!"
+    try:
+        return render_template("nifty_50_trading_terminal.html")
+    except Exception as e:
+        return f"Trading Terminal HTML file error: {str(e)}"
 
 @app.route('/pdf-tool')
 def pdf_tool():
-    pdf_html = os.path.join(desktop_path, "pdf_to_excel.html") 
-    if os.path.exists(pdf_html):
-        return send_file(pdf_html)
-    return "PDF Tool HTML file not found on Desktop!"
+    try:
+        return render_template("pdf_to_excel.html")
+    except Exception as e:
+        return f"PDF Tool HTML file error: {str(e)}"
 
 @app.route('/api/data')
 def get_data():
@@ -91,7 +90,7 @@ def get_data():
         # Fetch 15M Higher Timeframe Data for Trend Filter
         df_15m = yf.download(tickers='^NSEI', period='5d', interval='15m', progress=False)
         if isinstance(df_15m.columns, pd.MultiIndex):
-            df_15m.columns = df_15m.columns.get_level_values(0)
+            df_15m = df_15m.columns.get_level_values(0)
         df_15m = df_15m.dropna()
         
         htf_ema50 = df_15m['Close'].ewm(span=50, adjust=False).mean().iloc[-1] if len(df_15m) >= 50 else df_15m['Close'].iloc[-1]
@@ -372,8 +371,6 @@ def get_data():
         })
     except Exception as e:
         return jsonify({'error': str(e)})
-
-import os
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
