@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nifty 50 Pro Terminal - Advanced Filters</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        body { background-color: #131722; color: #d1d4dc; padding: 20px; }
+        .header { display: flex; justify-content: space-between; align-items: center; background: #1e222d; padding: 15px 20px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #2a2e39; }
+        .price-box { display: flex; align-items: baseline; gap: 15px; }
+        .price { font-size: 28px; font-weight: bold; color: #fff; }
+        .change { font-size: 18px; font-weight: 600; }
+        .up { color: #089981; }
+        .down { color: #f23645; }
+        .tf-buttons button { background: #2a2e39; color: #b2b5be; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: bold; margin-left: 5px; }
+        .tf-buttons button.active, .tf-buttons button:hover { background: #2962ff; color: #fff; }
+        .grid { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; }
+        .card { background: #1e222d; padding: 20px; border-radius: 8px; border: 1px solid #2a2e39; margin-bottom: 20px; }
+        .card h3 { color: #9b9ef0; margin-bottom: 15px; font-size: 16px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .chart-container { position: relative; height: 350px; width: 100%; }
+        .score-box { text-align: center; padding: 15px; background: #2a2e39; border-radius: 6px; margin-bottom: 15px; }
+        .score-value { font-size: 32px; font-weight: bold; }
+        .setup-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+        .setup-item { background: #2a2e39; padding: 10px; border-radius: 4px; }
+        .setup-item span { display: block; font-size: 12px; color: #787b86; }
+        .setup-item strong { font-size: 15px; color: #fff; }
+        .indicator-list { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .ind-item { background: #2a2e39; padding: 10px; border-radius: 4px; display: flex; justify-content: space-between; align-items: center; }
+        .ind-name { font-size: 13px; font-weight: 600; }
+        .ind-status { font-size: 12px; padding: 2px 6px; border-radius: 3px; background: #131722; }
+        .stats-box { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 10px; text-align: center; margin-bottom: 15px; }
+        .stat-card { background: #2a2e39; padding: 10px; border-radius: 6px; }
+        .stat-card span { font-size: 11px; color: #787b86; }
+        .stat-card h4 { font-size: 18px; margin-top: 4px; color: #fff; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
+        th, td { text-align: left; padding: 8px; border-bottom: 1px solid #2a2e39; }
+        th { color: #787b86; font-weight: 600; }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <div>
+            <h1 style="color: #fff; font-size: 22px;">NIFTY 50 PRO TERMINAL</h1>
+            <div class="price-box" style="margin-top: 5px;">
+                <span id="price" class="price">--.--</span>
+                <span id="change" class="change">--.-- (--%)</span>
+            </div>
+        </div>
+        <div class="tf-buttons">
+            <button onclick="changeTF('1m')" id="btn-1m">1M</button>
+            <button onclick="changeTF('3m')" id="btn-3m">3M</button>
+            <button onclick="changeTF('5m')" id="btn-5m" class="active">5M</button>
+            <button onclick="changeTF('15m')" id="btn-15m">15M</button>
+        </div>
+    </div>
+
+    <div class="grid">
+        <!-- Left Column -->
+        <div>
+            <div class="card">
+                <h3>Live Technical Price Chart</h3>
+                <div class="chart-container">
+                    <canvas id="niftyChart"></canvas>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>Strategy Performance History</h3>
+                <div class="stats-box">
+                    <div class="stat-card"><span>Total Trades</span><h4 id="st-total">0</h4></div>
+                    <div class="stat-card"><span>Target Hits 🎯</span><h4 id="st-targets" style="color:#089981;">0</h4></div>
+                    <div class="stat-card"><span>SL Hits ❌</span><h4 id="st-sls" style="color:#f23645;">0</h4></div>
+                    <div class="stat-card"><span>Win Rate %</span><h4 id="st-winrate" style="color:#2962ff;">0%</h4></div>
+                </div>
+                <h3>Recent Trade Log</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Signal</th>
+                            <th>Strike</th>
+                            <th>Entry</th>
+                            <th>Exit/LTP</th>
+                            <th>Result</th>
+                        </tr>
+                    </thead>
+                    <tbody id="history-table">
+                        <tr><td colspan="6" style="text-align:center; color:#787b86;">No completed trades yet in this session</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="card">
+                <h3>Confluence & Filter Breakdown</h3>
+                <div class="indicator-list" id="indicator-container"></div>
+            </div>
+        </div>
+
+        <!-- Right Column -->
+        <div>
+            <div class="card">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <h3>Confluence & Filters</h3>
+                    <span id="lock-status" style="font-size: 11px; padding: 2px 8px; border-radius: 4px; background: #2a2e39; color: #aaa;">Status: Idle</span>
+                </div>
+                <div class="score-box" style="margin-top: 10px;">
+                    <span>Confluence Score</span>
+                    <div id="score" class="score-value">0</div>
+                    <div style="font-size: 12px; color: #00bcd4; margin-top: 4px;">15M HTF Trend: <b id="htf-trend">--</b></div>
+                </div>
+                <div class="setup-item" style="text-align: center; margin-bottom: 10px;">
+                    <span>Action Signal</span>
+                    <strong id="action-signal" style="font-size: 18px; color: #ffeb3b;">--</strong>
+                </div>
+                <div class="setup-grid">
+                    <div class="setup-item"><span>Spot Entry Level</span><strong id="spot-entry">--</strong></div>
+                    <div class="setup-item"><span>Spot Stop-Loss</span><strong id="spot-sl" style="color:#f23645;">--</strong></div>
+                    <div class="setup-item"><span>Spot Target</span><strong id="spot-tp" style="color:#089981;">--</strong></div>
+                    <div class="setup-item"><span>Risk : Reward</span><strong id="spot-rr">1 : 2.0</strong></div>
+                </div>
+            </div>
+
+            <div class="card" style="border: 1px solid #2962ff;">
+                <h3 style="color: #2962ff;">🎯 Locked Option Recommendation</h3>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                    <div class="setup-item">
+                        <span>Recommended Strike</span>
+                        <strong id="opt-strike" style="color: #00bcd4; font-size: 16px;">--</strong>
+                    </div>
+                    <div class="setup-item">
+                        <span>Est. Premium Range</span>
+                        <strong id="opt-buy" style="color: #ffeb3b; font-size: 16px;">--</strong>
+                    </div>
+                    <div class="setup-item">
+                        <span>Option Stop-Loss</span>
+                        <strong id="opt-sl" style="color: #f23645; font-size: 16px;">--</strong>
+                    </div>
+                    <div class="setup-item">
+                        <span>Option Target</span>
+                        <strong id="opt-target" style="color: #089981; font-size: 16px;">--</strong>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentTF = '5m';
+        let chart = null;
+
+        function initChart() {
+            const ctx = document.getElementById('niftyChart').getContext('2d');
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        { label: 'Close Price', data: [], borderColor: '#2962ff', borderWidth: 2, fill: false },
+                        { label: 'EMA 9', data: [], borderColor: '#00bcd4', borderWidth: 1, pointRadius: 0 },
+                        { label: 'EMA 21', data: [], borderColor: '#ff9800', borderWidth: 1, pointRadius: 0 }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { grid: { color: '#2a2e39' }, ticks: { color: '#787b86' } },
+                        y: { grid: { color: '#2a2e39' }, ticks: { color: '#787b86' } }
+                    },
+                    plugins: { legend: { labels: { color: '#d1d4dc' } } }
+                }
+            });
+        }
+
+        function changeTF(tf) {
+            currentTF = tf;
+            document.querySelectorAll('.tf-buttons button').forEach(btn => btn.classList.remove('active'));
+            document.getElementById('btn-' + tf).classList.add('active');
+            fetchData();
+        }
+
+        function fetchData() {
+            fetch('/api/data?tf=' + currentTF)
+                .then(res => res.json())
+                .then(data => {
+                    if (data.error) return;
+
+                    document.getElementById('price').innerText = '₹' + data.price.toFixed(2);
+                    const changeEl = document.getElementById('change');
+                    changeEl.innerText = (data.change >= 0 ? '+' : '') + data.change + ' (' + data.change_pct + '%)';
+                    changeEl.className = 'change ' + (data.change >= 0 ? 'up' : 'down');
+
+                    const lockBadge = document.getElementById('lock-status');
+                    if (data.trade.is_locked) {
+                        lockBadge.innerText = "🔒 TRADE IN PROGRESS (LOCKED)";
+                        lockBadge.style.background = "#e91e63";
+                        lockBadge.style.color = "#fff";
+                    } else {
+                        lockBadge.innerText = "STATUS: SEARCHING SIGNAL";
+                        lockBadge.style.background = "#2a2e39";
+                        lockBadge.style.color = "#aaa";
+                    }
+
+                    const scoreEl = document.getElementById('score');
+                    scoreEl.innerText = data.score;
+                    scoreEl.style.color = data.score >= 40 ? '#089981' : (data.score <= -40 ? '#f23645' : '#ffeb3b');
+                    document.getElementById('htf-trend').innerText = data.htf_trend || '--';
+
+                    document.getElementById('action-signal').innerText = data.trade.action;
+                    document.getElementById('spot-entry').innerText = '₹' + data.trade.entry;
+                    document.getElementById('spot-sl').innerText = '₹' + data.trade.sl;
+                    document.getElementById('spot-tp').innerText = '₹' + data.trade.tp;
+
+                    if (data.option_trade) {
+                        document.getElementById('opt-strike').innerText = data.option_trade.strike;
+                        document.getElementById('opt-buy').innerText = data.option_trade.buy_price;
+                        document.getElementById('opt-sl').innerText = data.option_trade.sl;
+                        document.getElementById('opt-target').innerText = data.option_trade.target;
+                    }
+
+                    if (data.stats) {
+                        document.getElementById('st-total').innerText = data.stats.total;
+                        document.getElementById('st-targets').innerText = data.stats.targets;
+                        document.getElementById('st-sls').innerText = data.stats.sls;
+                        document.getElementById('st-winrate').innerText = data.stats.win_rate + '%';
+
+                        const histTable = document.getElementById('history-table');
+                        if (data.stats.history.length > 0) {
+                            histTable.innerHTML = '';
+                            data.stats.history.forEach(item => {
+                                const row = `<tr>
+                                    <td>${item.time}</td>
+                                    <td><b>${item.type}</b></td>
+                                    <td>${item.strike}</td>
+                                    <td>₹${item.entry}</td>
+                                    <td>₹${item.exit}</td>
+                                    <td style="color:${item.color}; font-weight:bold;">${item.result}</td>
+                                </tr>`;
+                                histTable.innerHTML += row;
+                            });
+                        }
+                    }
+
+                    const indContainer = document.getElementById('indicator-container');
+                    indContainer.innerHTML = '';
+                    for (const [key, val] of Object.entries(data.indicators)) {
+                        const item = document.createElement('div');
+                        item.className = 'ind-item';
+                        item.innerHTML = `<span class="ind-name">${key.toUpperCase()}</span><span class="ind-status">${val.status}</span>`;
+                        indContainer.appendChild(item);
+                    }
+
+                    if (chart && data.chart) {
+                        chart.data.labels = data.chart.map(c => c.time);
+                        chart.data.datasets[0].data = data.chart.map(c => c.close);
+                        chart.data.datasets[1].data = data.chart.map(c => c.ema9);
+                        chart.data.datasets[2].data = data.chart.map(c => c.ema21);
+                        chart.update();
+                    }
+                })
+                .catch(err => console.error("Fetch Error:", err));
+        }
+
+        window.onload = function() {
+            initChart();
+            fetchData();
+            setInterval(fetchData, 10000);
+        };
+    </script>
+</body>
+</html>
