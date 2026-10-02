@@ -1,6 +1,7 @@
 import os
 import sys
 from datetime import datetime
+import requests
 
 try:
     from flask import Flask, jsonify, send_file, request, render_template
@@ -8,13 +9,33 @@ try:
     import pandas as pd
     import numpy as np
 except ImportError:
-    os.system(f"{sys.executable} -m pip install flask yfinance pandas numpy")
+    os.system(f"{sys.executable} -m pip install flask yfinance pandas numpy requests")
     from flask import Flask, jsonify, send_file, request, render_template
     import yfinance as yf
     import pandas as pd
     import numpy as np
+    import requests
 
 app = Flask(__name__, template_folder='.')
+
+# ==========================================
+# 🚀 TELEGRAM BOT CONFIGURATION
+# ==========================================
+TELEGRAM_BOT_TOKEN = "8993766701:AAFcwDfDyF85NS0IDuC6_sANBBXJPp7At58"
+TELEGRAM_CHAT_ID = "8637158829"
+
+def send_telegram_alert(message):
+    """Utility function to send instant notifications to Telegram"""
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        payload = {
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": message,
+            "parse_mode": "Markdown"
+        }
+        requests.post(url, json=payload, timeout=5)
+    except Exception as e:
+        print(f"Failed to send Telegram alert: {e}")
 
 # --- GLOBAL STATE FOR LOCKING & TRADE HISTORY TRACKING ---
 trade_state = {
@@ -27,7 +48,7 @@ trade_state = {
     'opt_buy': '--',
     'opt_sl': '--',
     'opt_tp': '--',
-    'cooldown_until': 0  # Cooldown counter
+    'cooldown_until': 0
 }
 
 trade_stats = {
@@ -59,7 +80,6 @@ def get_data():
         tf = request.args.get('tf', '5m')
         fetch_tf = '1m' if tf == '3m' else tf
         
-        # Extended period to ensure data retrieval
         period = '7d' if fetch_tf in ['1m', '3m', '5m', '15m'] else '30d'
 
         df = yf.download(tickers='^NSEI', period=period, interval=fetch_tf, progress=False)
@@ -69,7 +89,6 @@ def get_data():
             df = ticker.history(period=period, interval=fetch_tf)
 
         if df is None or df.empty:
-            # Fallback to Daily Data if Intraday fails
             df = yf.download(tickers='^NSEI', period='1mo', interval='1d', progress=False)
 
         if isinstance(df.columns, pd.MultiIndex):
@@ -80,13 +99,11 @@ def get_data():
         if df.empty:
             return jsonify({'error': 'Data fetch failed from Yahoo Finance'})
 
-        # Safe extraction of columns
         close = df['Close'].squeeze()
         high = df['High'].squeeze()
         low = df['Low'].squeeze()
         volume = df['Volume'].squeeze() if 'Volume' in df.columns else pd.Series(0, index=df.index)
 
-        # Resample for 3m if selected
         if tf == '3m' and not df.empty:
             df_resampled = df.resample('3min').agg({
                 'Open': 'first',
@@ -102,7 +119,7 @@ def get_data():
                 low = df['Low'].squeeze()
                 volume = df['Volume'].squeeze()
 
-        # Fetch 15M Higher Timeframe Data for Trend Filter
+        # Fetch 15M HTF Data
         df_15m = yf.download(tickers='^NSEI', period='7d', interval='15m', progress=False)
         if isinstance(df_15m.columns, pd.MultiIndex):
             df_15m.columns = df_15m.columns.get_level_values(0)
@@ -121,14 +138,12 @@ def get_data():
         change = round(latest_price - prev_close, 2)
         change_pct = round((change / prev_close) * 100, 2)
 
-        # 1. OPTIMIZED ATR VOLATILITY SL/TP
         tr = np.maximum(high - low, np.maximum(abs(high - close.shift(1)), abs(low - close.shift(1))))
         atr = float(tr.tail(14).mean()) if len(tr) >= 14 else 18.0
         
         sl_points = max(18.0, round(atr * 2.0, 1))
         tp_points = round(sl_points * 1.5, 1)
 
-        # Technical Indicators Setup
         ema9 = close.ewm(span=9, adjust=False).mean()
         ema21 = close.ewm(span=21, adjust=False).mean()
         ema50 = close.ewm(span=50, adjust=False).mean()
@@ -151,7 +166,6 @@ def get_data():
         v_macd = float(macd.iloc[-1])
         v_macd_sig = float(macd_signal.iloc[-1])
 
-        # Fibonacci
         recent_20_high = float(high.tail(20).max())
         recent_20_low = float(low.tail(20).min())
         fib_range = recent_20_high - recent_20_low
@@ -168,7 +182,6 @@ def get_data():
             fib_status = "Bearish Zone"
             fib_score = -10
 
-        # Volume
         v_curr = float(volume.iloc[-1]) if len(volume) > 0 else 0
         v_sma20 = float(volume.tail(20).mean()) if len(volume) >= 20 else v_curr
         if v_curr > (1.5 * v_sma20) and v_sma20 > 0:
@@ -181,13 +194,8 @@ def get_data():
             vol_status = "Low Volume (Sideways)"
             vol_score = -15
 
-        # HIGH ACCURACY CONFLUENCE SCORE ENGINE
         score = 0
-        if latest_price > v_ema50:
-            score += 20
-        else:
-            score -= 20
-
+        score += 20 if latest_price > v_ema50 else -20
         ema_status = "9 EMA > 21 EMA" if v_ema9 > v_ema21 else "9 EMA < 21 EMA"
         score += 20 if v_ema9 > v_ema21 else -20
 
@@ -207,13 +215,12 @@ def get_data():
         score += fib_score + vol_score
         score = max(-100, min(100, score))
 
-        # Time Filter
         current_time_obj = df.index[-1]
         current_time_str = current_time_obj.strftime('%H:%M')
         time_minutes = current_time_obj.hour * 60 + current_time_obj.minute
         is_no_trade_zone = (555 <= time_minutes <= 565) or (810 <= time_minutes <= 840)
 
-        # --- POSITION LOCKING & HISTORICAL TRACKING ENGINE ---
+        # --- POSITION LOCKING, EXIT & TELEGRAM ALERT ENGINE ---
         if trade_state['active']:
             if "CALL" in trade_state['action']:
                 if latest_price >= trade_state['tp']:
@@ -223,8 +230,13 @@ def get_data():
                         'time': current_time_str, 'type': 'BUY CE', 'strike': trade_state['opt_strike'],
                         'entry': trade_state['entry'], 'exit': latest_price, 'result': 'TARGET HIT 🎯', 'color': '#089981'
                     })
+                    
+                    msg = f"🎯 *TARGET HIT ALERT! (NIFTY 50)*\n\nTrade: BUY CE ({trade_state['opt_strike']})\nEntry: ₹{trade_state['entry']}\nExit Price: ₹{latest_price}\nResult: TARGET REACHED 🚀\nTime: {current_time_str}"
+                    send_telegram_alert(msg)
+
                     trade_state['active'] = False
                     trade_state['cooldown_until'] = 3
+
                 elif latest_price <= trade_state['sl']:
                     trade_stats['total_trades'] += 1
                     trade_stats['sl_hits'] += 1
@@ -232,6 +244,10 @@ def get_data():
                         'time': current_time_str, 'type': 'BUY CE', 'strike': trade_state['opt_strike'],
                         'entry': trade_state['entry'], 'exit': latest_price, 'result': 'STOP LOSS HIT ❌', 'color': '#f23645'
                     })
+                    
+                    msg = f"❌ *STOP LOSS HIT ALERT! (NIFTY 50)*\n\nTrade: BUY CE ({trade_state['opt_strike']})\nEntry: ₹{trade_state['entry']}\nExit Price: ₹{latest_price}\nResult: STOP LOSS HIT\nTime: {current_time_str}"
+                    send_telegram_alert(msg)
+
                     trade_state['active'] = False
                     trade_state['cooldown_until'] = 3
 
@@ -243,8 +259,13 @@ def get_data():
                         'time': current_time_str, 'type': 'BUY PE', 'strike': trade_state['opt_strike'],
                         'entry': trade_state['entry'], 'exit': latest_price, 'result': 'TARGET HIT 🎯', 'color': '#089981'
                     })
+                    
+                    msg = f"🎯 *TARGET HIT ALERT! (NIFTY 50)*\n\nTrade: BUY PE ({trade_state['opt_strike']})\nEntry: ₹{trade_state['entry']}\nExit Price: ₹{latest_price}\nResult: TARGET REACHED 🚀\nTime: {current_time_str}"
+                    send_telegram_alert(msg)
+
                     trade_state['active'] = False
                     trade_state['cooldown_until'] = 3
+
                 elif latest_price >= trade_state['sl']:
                     trade_stats['total_trades'] += 1
                     trade_stats['sl_hits'] += 1
@@ -252,6 +273,10 @@ def get_data():
                         'time': current_time_str, 'type': 'BUY PE', 'strike': trade_state['opt_strike'],
                         'entry': trade_state['entry'], 'exit': latest_price, 'result': 'STOP LOSS HIT ❌', 'color': '#f23645'
                     })
+                    
+                    msg = f"❌ *STOP LOSS HIT ALERT! (NIFTY 50)*\n\nTrade: BUY PE ({trade_state['opt_strike']})\nEntry: ₹{trade_state['entry']}\nExit Price: ₹{latest_price}\nResult: STOP LOSS HIT\nTime: {current_time_str}"
+                    send_telegram_alert(msg)
+
                     trade_state['active'] = False
                     trade_state['cooldown_until'] = 3
 
@@ -293,6 +318,15 @@ def get_data():
                 trade_state['opt_sl'] = f"₹{round(max(5, est_option_premium - option_sl_pts), 1)} (-{option_sl_pts} pts)"
                 trade_state['opt_tp'] = f"₹{round(est_option_premium + option_tp_pts, 1)} (+{option_tp_pts} pts)"
 
+                msg = (f"🚀 *NEW TRADE SIGNAL LOCKED! (BUY CALL)*\n\n"
+                       f"📈 *Instrument:* NIFTY 50 ({atm_strike} CE)\n"
+                       f"🎯 *Spot Entry:* ₹{trade_state['entry']}\n"
+                       f"🛡️ *Spot StopLoss:* ₹{trade_state['sl']}\n"
+                       f"🏆 *Spot Target:* ₹{trade_state['tp']}\n"
+                       f"📊 *Confluence Score:* +{score}/100\n"
+                       f"⏰ *Time:* {current_time_str}")
+                send_telegram_alert(msg)
+
             elif score <= -60 and htf_trend == "BEARISH":
                 trade_state['active'] = True
                 trade_state['action'] = "BUY PE / PUT"
@@ -303,6 +337,15 @@ def get_data():
                 trade_state['opt_buy'] = f"₹{round(est_option_premium - 5, 1)} - ₹{round(est_option_premium + 5, 1)}"
                 trade_state['opt_sl'] = f"₹{round(max(5, est_option_premium - option_sl_pts), 1)} (-{option_sl_pts} pts)"
                 trade_state['opt_tp'] = f"₹{round(est_option_premium + option_tp_pts, 1)} (+{option_tp_pts} pts)"
+
+                msg = (f"🔻 *NEW TRADE SIGNAL LOCKED! (BUY PUT)*\n\n"
+                       f"📉 *Instrument:* NIFTY 50 ({atm_strike} PE)\n"
+                       f"🎯 *Spot Entry:* ₹{trade_state['entry']}\n"
+                       f"🛡️ *Spot StopLoss:* ₹{trade_state['sl']}\n"
+                       f"🏆 *Spot Target:* ₹{trade_state['tp']}\n"
+                       f"📊 *Confluence Score:* {score}/100\n"
+                       f"⏰ *Time:* {current_time_str}")
+                send_telegram_alert(msg)
 
             else:
                 trade_state['action'] = "WAIT / LOW CONFLUENCE (<60)"
@@ -371,7 +414,6 @@ def get_data():
         })
     except Exception as e:
         import traceback
-        print("API ERROR TRACEBACK:", traceback.format_exc())
         return jsonify({'error': str(e), 'details': traceback.format_exc()})
 
 if __name__ == '__main__':
