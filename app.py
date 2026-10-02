@@ -59,16 +59,16 @@ def get_data():
         tf = request.args.get('tf', '5m')
         fetch_tf = '1m' if tf == '3m' else tf
         
-        # Extended period to fetch data even during market holidays / closed hours
+        # Extended period to ensure data retrieval
         period = '7d' if fetch_tf in ['1m', '3m', '5m', '15m'] else '30d'
 
         df = yf.download(tickers='^NSEI', period=period, interval=fetch_tf, progress=False)
         
-        if df.empty:
+        if df is None or df.empty:
             ticker = yf.Ticker('^NSEI')
             df = ticker.history(period=period, interval=fetch_tf)
 
-        if df.empty:
+        if df is None or df.empty:
             # Fallback to Daily Data if Intraday fails
             df = yf.download(tickers='^NSEI', period='1mo', interval='1d', progress=False)
 
@@ -79,6 +79,12 @@ def get_data():
 
         if df.empty:
             return jsonify({'error': 'Data fetch failed from Yahoo Finance'})
+
+        # Safe extraction of columns
+        close = df['Close'].squeeze()
+        high = df['High'].squeeze()
+        low = df['Low'].squeeze()
+        volume = df['Volume'].squeeze() if 'Volume' in df.columns else pd.Series(0, index=df.index)
 
         # Resample for 3m if selected
         if tf == '3m' and not df.empty:
@@ -91,37 +97,35 @@ def get_data():
             }).dropna()
             if not df_resampled.empty:
                 df = df_resampled
+                close = df['Close'].squeeze()
+                high = df['High'].squeeze()
+                low = df['Low'].squeeze()
+                volume = df['Volume'].squeeze()
 
         # Fetch 15M Higher Timeframe Data for Trend Filter
         df_15m = yf.download(tickers='^NSEI', period='7d', interval='15m', progress=False)
         if isinstance(df_15m.columns, pd.MultiIndex):
-            df_15m = df_15m.columns.get_level_values(0)
+            df_15m.columns = df_15m.columns.get_level_values(0)
         df_15m = df_15m.dropna()
         if df_15m.empty:
             df_15m = df.copy()
         
-        htf_ema50 = df_15m['Close'].ewm(span=50, adjust=False).mean().iloc[-1] if len(df_15m) >= 50 else df_15m['Close'].iloc[-1]
-        htf_close = df_15m['Close'].iloc[-1]
+        close_15m = df_15m['Close'].squeeze()
+        htf_ema50 = close_15m.ewm(span=50, adjust=False).mean().iloc[-1] if len(close_15m) >= 50 else close_15m.iloc[-1]
+        htf_close = float(close_15m.iloc[-1])
         htf_trend = "BULLISH" if htf_close >= htf_ema50 else "BEARISH"
 
-        close = df['Close']
-        high = df['High']
-        low = df['Low']
-        volume = df['Volume'] if 'Volume' in df.columns else pd.Series(0, index=df.index)
-        
         latest_price = float(close.iloc[-1])
         prev_close = float(close.iloc[-2]) if len(close) > 1 else latest_price
         
         change = round(latest_price - prev_close, 2)
         change_pct = round((change / prev_close) * 100, 2)
 
-        # 1. OPTIMIZED ATR VOLATILITY SL/TP (Wider SL to prevent whipsaws)
+        # 1. OPTIMIZED ATR VOLATILITY SL/TP
         tr = np.maximum(high - low, np.maximum(abs(high - close.shift(1)), abs(low - close.shift(1))))
         atr = float(tr.tail(14).mean()) if len(tr) >= 14 else 18.0
         
-        # SL kept slightly wider (2.0 x ATR) to survive market noise
         sl_points = max(18.0, round(atr * 2.0, 1))
-        # Realistic Target (1.5 x SL) for higher win rate execution
         tp_points = round(sl_points * 1.5, 1)
 
         # Technical Indicators Setup
@@ -177,20 +181,16 @@ def get_data():
             vol_status = "Low Volume (Sideways)"
             vol_score = -15
 
-        # HIGH ACCURACY CONFLUENCE SCORE ENGINE (Max Score ±100)
+        # HIGH ACCURACY CONFLUENCE SCORE ENGINE
         score = 0
-        
-        # 1. Trend Alignment with 50 EMA (+20 / -20)
         if latest_price > v_ema50:
             score += 20
         else:
             score -= 20
 
-        # 2. EMA Crossover (+20 / -20)
         ema_status = "9 EMA > 21 EMA" if v_ema9 > v_ema21 else "9 EMA < 21 EMA"
         score += 20 if v_ema9 > v_ema21 else -20
 
-        # 3. RSI Quality Zone Filter (+20 / -20)
         if 55 <= v_rsi <= 70:
             rsi_status = f"{v_rsi:.1f} (Bullish Momentum)"
             score += 20
@@ -201,14 +201,10 @@ def get_data():
             rsi_status = f"{v_rsi:.1f} (Neutral/Overbought)"
             score += 0
 
-        # 4. MACD Signal (+20 / -20)
         macd_status = "Bullish Cross" if v_macd > v_macd_sig else "Bearish Cross"
         score += 20 if v_macd > v_macd_sig else -20
 
-        # 5. Fib & Volume
         score += fib_score + vol_score
-
-        # Cap score between -100 and 100
         score = max(-100, min(100, score))
 
         # Time Filter
@@ -228,7 +224,7 @@ def get_data():
                         'entry': trade_state['entry'], 'exit': latest_price, 'result': 'TARGET HIT 🎯', 'color': '#089981'
                     })
                     trade_state['active'] = False
-                    trade_state['cooldown_until'] = 3 # Block next 3 checks
+                    trade_state['cooldown_until'] = 3
                 elif latest_price <= trade_state['sl']:
                     trade_stats['total_trades'] += 1
                     trade_stats['sl_hits'] += 1
@@ -259,11 +255,9 @@ def get_data():
                     trade_state['active'] = False
                     trade_state['cooldown_until'] = 3
 
-        # Manage Cooldown
         if not trade_state['active'] and trade_state['cooldown_until'] > 0:
             trade_state['cooldown_until'] -= 1
 
-        # STRICT SIGNAL TRIGGER CHECK (Requires Score >= 60 OR <= -60)
         if not trade_state['active']:
             atm_strike = int(round(latest_price / 50.0) * 50)
             est_option_premium = round(latest_price * 0.008, 1)
@@ -376,7 +370,9 @@ def get_data():
             'chart': chart_data
         })
     except Exception as e:
-        return jsonify({'error': str(e)})
+        import traceback
+        print("API ERROR TRACEBACK:", traceback.format_exc())
+        return jsonify({'error': str(e), 'details': traceback.format_exc()})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
