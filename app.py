@@ -14,7 +14,7 @@ except ImportError:
     import pandas as pd
     import numpy as np
 
-app = Flask(__name__)
+app = Flask(__name__, template_folder='.')
 desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
 
 # --- GLOBAL STATE FOR LOCKING & TRADE HISTORY TRACKING ---
