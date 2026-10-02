@@ -58,8 +58,9 @@ def get_data():
     try:
         tf = request.args.get('tf', '5m')
         fetch_tf = '1m' if tf == '3m' else tf
-        period_map = {'1m': '1d', '3m': '1d', '5m': '5d', '15m': '5d'}
-        period = period_map.get(tf, '5d')
+        
+        # Extended period to fetch data even during market holidays / closed hours
+        period = '7d' if fetch_tf in ['1m', '3m', '5m', '15m'] else '30d'
 
         df = yf.download(tickers='^NSEI', period=period, interval=fetch_tf, progress=False)
         
@@ -68,12 +69,16 @@ def get_data():
             df = ticker.history(period=period, interval=fetch_tf)
 
         if df.empty:
-            return jsonify({'error': 'Data fetch failed from Yahoo Finance'})
+            # Fallback to Daily Data if Intraday fails
+            df = yf.download(tickers='^NSEI', period='1mo', interval='1d', progress=False)
 
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
 
         df = df.dropna()
+
+        if df.empty:
+            return jsonify({'error': 'Data fetch failed from Yahoo Finance'})
 
         # Resample for 3m if selected
         if tf == '3m' and not df.empty:
@@ -88,10 +93,12 @@ def get_data():
                 df = df_resampled
 
         # Fetch 15M Higher Timeframe Data for Trend Filter
-        df_15m = yf.download(tickers='^NSEI', period='5d', interval='15m', progress=False)
+        df_15m = yf.download(tickers='^NSEI', period='7d', interval='15m', progress=False)
         if isinstance(df_15m.columns, pd.MultiIndex):
             df_15m = df_15m.columns.get_level_values(0)
         df_15m = df_15m.dropna()
+        if df_15m.empty:
+            df_15m = df.copy()
         
         htf_ema50 = df_15m['Close'].ewm(span=50, adjust=False).mean().iloc[-1] if len(df_15m) >= 50 else df_15m['Close'].iloc[-1]
         htf_close = df_15m['Close'].iloc[-1]
@@ -184,7 +191,6 @@ def get_data():
         score += 20 if v_ema9 > v_ema21 else -20
 
         # 3. RSI Quality Zone Filter (+20 / -20)
-        # Strong Buy only when RSI 55-70, Strong Sell when 30-45
         if 55 <= v_rsi <= 70:
             rsi_status = f"{v_rsi:.1f} (Bullish Momentum)"
             score += 20
