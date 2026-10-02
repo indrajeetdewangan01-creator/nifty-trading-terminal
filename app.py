@@ -21,8 +21,8 @@ app = Flask(__name__, template_folder='.')
 # ==========================================
 # 🚀 TELEGRAM BOT CONFIGURATION
 # ==========================================
-TELEGRAM_BOT_TOKEN = "8993766701:AAFcwDfDyF85NS0IDuC6_sANBBXJPp7At58"
-TELEGRAM_CHAT_ID = "8637158829"
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8993766701:AAEVS6cCjvVOX23YpoZxzT_nk72ghd9Hn-Y")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "8637158829")
 
 def send_telegram_alert(message):
     """Utility function to send instant notifications to Telegram"""
