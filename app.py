@@ -80,7 +80,8 @@ def get_data():
         tf = request.args.get('tf', '5m')
         fetch_tf = '1m' if tf == '3m' else tf
         
-        period = '7d' if fetch_tf in ['1m', '3m', '5m', '15m'] else '30d'
+        # RAM optimization: 1m/3m ke liye sirf 1 din ka data fetch hoga taaki memory limit cross na ho
+        period = '1d' if fetch_tf in ['1m', '3m'] else ('7d' if fetch_tf == '15m' else '30d')
 
         df = yf.download(tickers='^NSEI', period=period, interval=fetch_tf, progress=False)
         
@@ -119,8 +120,8 @@ def get_data():
                 low = df['Low'].squeeze()
                 volume = df['Volume'].squeeze()
 
-        # Fetch 15M HTF Data
-        df_15m = yf.download(tickers='^NSEI', period='7d', interval='15m', progress=False)
+        # Fetch 15M HTF Data (optimized period)
+        df_15m = yf.download(tickers='^NSEI', period='2d', interval='15m', progress=False)
         if isinstance(df_15m.columns, pd.MultiIndex):
             df_15m.columns = df_15m.columns.get_level_values(0)
         df_15m = df_15m.dropna()
