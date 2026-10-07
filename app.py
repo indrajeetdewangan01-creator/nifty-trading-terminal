@@ -11,10 +11,15 @@ app = Flask(__name__)
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "YOUR_CHAT_ID")
 
-# Independent trade locks restricted strictly for 1m and 3m scalping
-active_trades = {
-    "1m": {"status": "IDLE", "signal_type": None, "strike": None, "entry": 0.0, "target": 0.0, "stop_loss": 0.0},
-    "3m": {"status": "IDLE", "signal_type": None, "strike": None, "entry": 0.0, "target": 0.0, "stop_loss": 0.0}
+# Single Global Trade Lock to prevent multiple opposite signals at the same time
+global_trade = {
+    "status": "IDLE",       # IDLE or ACTIVE
+    "timeframe": None,      # '1m' or '3m'
+    "signal_type": None,    # 'BUY CE' or 'BUY PE'
+    "strike": None,
+    "entry": 0.0,
+    "target": 0.0,
+    "stop_loss": 0.0
 }
 
 def send_telegram_message(message):
@@ -58,9 +63,8 @@ def calculate_indicators(df):
 
 @app.route('/')
 def index():
-    global active_trades
+    global global_trade
     try:
-        # Force/Default to 1m if any other timeframe is requested
         tf = request.args.get('tf', '1m').lower()
         if tf not in ['1m', '3m']:
             tf = '1m'
@@ -97,73 +101,68 @@ def index():
         rsi = float(latest['RSI']) if not np.isnan(latest['RSI']) else 50.0
         macd = float(latest['MACD']) if not np.isnan(latest['MACD']) else 0.0
         macd_signal = float(latest['MACD_Signal']) if not np.isnan(latest['MACD_Signal']) else 0.0
-        atr = float(latest['ATR']) if not np.isnan(latest['ATR']) else 10.0
+        atr = float(latest['ATR']) if not np.isnan(latest['ATR']) else 15.0
         
-        # Ultra-tight scalp buffers for 1m and 3m (Small SL & quick targets)
-        if tf == '1m':
-            sl_buffer = max(round(atr * 0.5, 2), 8.0)
-        else:  # 3m
-            sl_buffer = max(round(atr * 0.7, 2), 12.0)
-            
-        target_buffer = round(sl_buffer * 1.5, 2) # Quick 1:1.5 Risk-Reward for scalp
+        # Realistic Stop Loss & Targets for Nifty Spot (Safe from 1-second noise)
+        sl_buffer = max(round(atr * 1.5, 2), 30.0)    # Minimum 30 points SL
+        target_buffer = round(sl_buffer * 2.0, 2)     # 1:2 Risk-Reward (60+ points target)
 
-        current_trade = active_trades[tf]
+        # --- MONITOR GLOBAL ACTIVE TRADE ---
+        if global_trade["status"] == "ACTIVE":
+            if global_trade["signal_type"] == "BUY CE":
+                if spot_price >= global_trade["target"] or spot_price <= global_trade["stop_loss"]:
+                    global_trade["status"] = "IDLE"
+            elif global_trade["signal_type"] == "BUY PE":
+                if spot_price <= global_trade["target"] or spot_price >= global_trade["stop_loss"]:
+                    global_trade["status"] = "IDLE"
 
-        # --- MONITOR ACTIVE TRADE ---
-        if current_trade["status"] == "ACTIVE":
-            if current_trade["signal_type"] == "BUY CE":
-                if spot_price >= current_trade["target"] or spot_price <= current_trade["stop_loss"]:
-                    current_trade["status"] = "IDLE"
-            elif current_trade["signal_type"] == "BUY PE":
-                if spot_price <= current_trade["target"] or spot_price >= current_trade["stop_loss"]:
-                    current_trade["status"] = "IDLE"
-
-        if current_trade["status"] == "ACTIVE":
-            htf_trend = f"SCALP LOCKED ({tf.upper()})"
-            signal_type = current_trade["signal_type"]
-            recommended_strike = current_trade["strike"]
-            spot_entry = current_trade["entry"]
-            spot_sl = current_trade["stop_loss"]
-            spot_target = current_trade["target"]
-            confluence_score = 88
+        if global_trade["status"] == "ACTIVE":
+            htf_trend = f"LOCKED ({global_trade['timeframe'].upper()})"
+            signal_type = global_trade["signal_type"]
+            recommended_strike = global_trade["strike"]
+            spot_entry = global_trade["entry"]
+            spot_sl = global_trade["stop_loss"]
+            spot_target = global_trade["target"]
+            confluence_score = 85
         else:
-            # Sensitive scalping conditions using fast EMA 5/13 crossover
             if ema_5 > ema_13 and rsi > 45:
-                htf_trend = "BULLISH SCALP"
+                htf_trend = "BULLISH"
                 signal_type = "BUY CE"
                 recommended_strike = f"{round(spot_price / 50) * 50} CE"
                 spot_entry = spot_price
                 spot_sl = spot_price - sl_buffer
                 spot_target = spot_price + target_buffer
-                confluence_score = 82
+                confluence_score = 80
             elif ema_5 < ema_13 and rsi < 55:
-                htf_trend = "BEARISH SCALP"
+                htf_trend = "BEARISH"
                 signal_type = "BUY PE"
                 recommended_strike = f"{round(spot_price / 50) * 50} PE"
                 spot_entry = spot_price
                 spot_sl = spot_price + sl_buffer
                 spot_target = spot_price - target_buffer
-                confluence_score = 82
+                confluence_score = 80
             else:
-                htf_trend = "SCANNING SCALP"
+                htf_trend = "SCANNING"
                 signal_type = "WAIT / NO TRADE"
                 recommended_strike = "N/A"
                 spot_entry = spot_price
                 spot_sl = 0
                 spot_target = 0
-                confluence_score = 50
+                confluence_score = 45
 
-            if "BUY" in signal_type and current_trade["status"] == "IDLE":
-                current_trade["status"] = "ACTIVE"
-                current_trade["signal_type"] = signal_type
-                current_trade["strike"] = recommended_strike
-                current_trade["entry"] = spot_entry
-                current_trade["target"] = spot_target
-                current_trade["stop_loss"] = spot_sl
+            # Lock trade globally if found and currently idle
+            if "BUY" in signal_type and global_trade["status"] == "IDLE":
+                global_trade["status"] = "ACTIVE"
+                global_trade["timeframe"] = tf
+                global_trade["signal_type"] = signal_type
+                global_trade["strike"] = recommended_strike
+                global_trade["entry"] = spot_entry
+                global_trade["target"] = spot_target
+                global_trade["stop_loss"] = spot_sl
 
                 sl_pts = round(abs(spot_entry - spot_sl), 2)
                 tgt_pts = round(abs(spot_target - spot_entry), 2)
-                msg = (f"⚡ *NIFTY {tf.upper()} SCALP SIGNAL* ⚡\nSignal: {signal_type}\nStrike: {recommended_strike}\nEntry: ₹{round(spot_entry, 2)}\nSL: ₹{round(spot_sl, 2)} (-{sl_pts} pts)\nTarget: ₹{round(spot_target, 2)} (+{tgt_pts} pts)")
+                msg = (f"🚀 *NIFTY {tf.upper()} SIGNAL* 🚀\nSignal: {signal_type}\nStrike: {recommended_strike}\nEntry: ₹{round(spot_entry, 2)}\nSL: ₹{round(spot_sl, 2)} (-{sl_pts} pts)\nTarget: ₹{round(spot_target, 2)} (+{tgt_pts} pts)")
                 send_telegram_message(msg)
 
         sl_points = round(abs(spot_entry - spot_sl), 2) if spot_sl > 0 else 0
