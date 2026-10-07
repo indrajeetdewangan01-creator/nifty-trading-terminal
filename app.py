@@ -44,7 +44,7 @@ def calculate_indicators(df):
     df['MACD'] = exp1 - exp2
     df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
     
-    # ATR (Average True Range) Calculation for Dynamic SL/Target
+    # ATR (Average True Range) Calculation
     high_low = df['High'] - df['Low']
     high_close = np.abs(df['High'] - df['Close'].shift())
     low_close = np.abs(df['Low'] - df['Close'].shift())
@@ -68,19 +68,24 @@ def index():
 
         data = calculate_indicators(data)
         latest = data.iloc[-1]
+        prev = data.iloc[-2]
         
         spot_price = float(latest['Close'])
+        prev_close = float(prev['Close'])
+        price_change = spot_price - prev_close
+        price_change_pct = (price_change / prev_close) * 100
+
         ema_9 = float(latest['EMA_9'])
         ema_21 = float(latest['EMA_21'])
         ema_50 = float(latest['EMA_50'])
-        rsi = float(latest['RSI'])
-        macd = float(latest['MACD'])
-        macd_signal = float(latest['MACD_Signal'])
+        rsi = float(latest['RSI']) if not np.isnan(latest['RSI']) else 50.0
+        macd = float(latest['MACD']) if not np.isnan(latest['MACD']) else 0.0
+        macd_signal = float(latest['MACD_Signal']) if not np.isnan(latest['MACD_Signal']) else 0.0
         atr = float(latest['ATR']) if not np.isnan(latest['ATR']) else 25.0
         
-        # Dynamic SL & Target buffer based on ATR (Volatility aware)
-        sl_buffer = max(round(atr * 1.2, 2), 30.0)  # Minimum 30 points or 1.2x ATR
-        target_buffer = round(sl_buffer * 2.0, 2)    # 1:2 Risk-Reward
+        # Dynamic SL & Target buffer based on ATR
+        sl_buffer = max(round(atr * 1.2, 2), 35.0)
+        target_buffer = round(sl_buffer * 2.0, 2)
 
         # Bi-directional Trend Filtering Logic with Enhanced Filters
         if spot_price > ema_50 and ema_9 > ema_21 and macd > macd_signal and rsi > 50:
@@ -113,12 +118,14 @@ def index():
             confluence_score -= 30
             
         if rsi > 55:
-            confluence_score += 20
+            confluence_score += 15
         elif rsi < 45:
-            confluence_score -= 20
+            confluence_score -= 15
 
-        sl_points = round(abs(spot_entry - spot_sl), 2)
-        target_points = round(abs(spot_target - spot_entry), 2)
+        confluence_score = max(0, min(100, confluence_score))
+
+        sl_points = round(abs(spot_entry - spot_sl), 2) if spot_sl > 0 else 0
+        target_points = round(abs(spot_target - spot_entry), 2) if spot_target > 0 else 0
 
         # Telegram Alert with Dynamic Points
         if "BUY" in signal_type:
@@ -131,7 +138,7 @@ def index():
                    f"Confluence Score: {confluence_score}/100")
             send_telegram_message(msg)
 
-        # HTML Dashboard Template
+        # HTML Pro Dashboard Template matching original user layout
         html_template = """
         <!DOCTYPE html>
         <html>
@@ -139,43 +146,148 @@ def index():
             <title>Nifty 50 Pro Terminal - Smart Bi-Directional</title>
             <meta http-equiv="refresh" content="60">
             <style>
-                body { background-color: #0d1117; color: #c9d1d9; font-family: Arial, sans-serif; margin: 0; padding: 20px; }
+                body { background-color: #0b0e14; color: #c9d1d9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 15px; }
                 .container { max-width: 1200px; margin: auto; }
-                .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
-                .header { display: flex; justify-content: space-between; align-items: center; }
-                .signal-ce { color: #3fb950; font-weight: bold; }
-                .signal-pe { color: #f85149; font-weight: bold; }
-                .grid { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; }
+                .card { background: #121821; border: 1px solid #21262d; border-radius: 10px; padding: 15px; margin-bottom: 15px; }
+                .header-card { display: flex; justify-content: space-between; align-items: center; background: #161b22; }
+                .price-title { font-size: 22px; font-weight: bold; color: #f0f6fc; }
+                .price-sub { font-size: 14px; margin-top: 5px; }
+                .text-green { color: #3fb950; }
+                .text-red { color: #f85149; }
+                .timeframe-tabs { display: flex; gap: 5px; }
+                .tf-btn { background: #21262d; border: none; color: #8b949e; padding: 6px 12px; border-radius: 4px; font-weight: bold; cursor: pointer; }
+                .tf-btn.active { background: #1f6feb; color: #ffffff; }
+                .grid-2col { display: grid; grid-template-columns: 2fr 1fr; gap: 15px; }
+                @media (max-width: 900px) { .grid-2col { grid-template-columns: 1fr; } }
+                .metrics-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 10px; }
+                .metric-box { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 10px; text-align: center; }
+                .metric-val { font-size: 16px; font-weight: bold; margin-top: 4px; }
+                .table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
+                .table th, .table td { padding: 8px; text-align: left; border-bottom: 1px solid #21262d; }
+                .table th { color: #8b949e; }
+                .badge-ce { background: rgba(63, 185, 80, 0.15); color: #3fb950; padding: 3px 8px; border-radius: 4px; font-weight: bold; }
+                .badge-pe { background: rgba(248, 81, 73, 0.15); color: #f85149; padding: 3px 8px; border-radius: 4px; font-weight: bold; }
+                .filter-tags { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+                .filter-pill { background: #161b22; border: 1px solid #30363d; padding: 6px 10px; border-radius: 6px; font-size: 12px; }
+                .filter-pill span { font-weight: bold; }
             </style>
         </head>
         <body>
             <div class="container">
-                <div class="card header">
-                    <h2>NIFTY 50 SMART TERMINAL</h2>
-                    <h3>Spot Price: ₹{{ spot_price }}</h3>
-                </div>
-                <div class="grid">
-                    <div class="card">
-                        <h3>Market & Trend Status</h3>
-                        <p><b>HTF Trend:</b> {{ htf_trend }}</p>
-                        <p><b>Action Signal:</b> <span class="{% if 'CE' in signal_type %}signal-ce{% elif 'PE' in signal_type %}signal-pe{% endif %}">{{ signal_type }}</span></p>
-                        <p><b>Confluence Score:</b> {{ confluence_score }} / 100</p>
-                        <p><b>RSI:</b> {{ rsi }} | <b>MACD:</b> {{ macd }} | <b>ATR:</b> {{ atr }}</p>
+                <!-- Top Header -->
+                <div class="card header-card">
+                    <div>
+                        <div style="font-size: 12px; color: #8b949e; font-weight: bold;">NIFTY 50 PRO TERMINAL</div>
+                        <div class="price-title">₹{{ spot_price }} 
+                            <span style="font-size: 14px;" class="{% if price_change >= 0 %}text-green{% else %}text-red{% endif %}">
+                                {{ price_change_formatted }} ({{ price_change_pct_formatted }}%)
+                            </span>
+                        </div>
                     </div>
-                    <div class="card">
-                        <h3>Option Recommendation</h3>
-                        <p><b>Strike:</b> {{ recommended_strike }}</p>
-                        <p><b>Entry:</b> ₹{{ spot_entry }}</p>
-                        <p><b>Target:</b> ₹{{ spot_target }} (+{{ target_points }} pts)</p>
-                        <p><b>Stop-Loss:</b> ₹{{ spot_sl }} (-{{ sl_points }} pts)</p>
+                    <div class="timeframe-tabs">
+                        <button class="tf-btn">1M</button>
+                        <button class="tf-btn">3M</button>
+                        <button class="tf-btn active">5M</button>
+                        <button class="tf-btn">15M</button>
+                    </div>
+                </div>
+
+                <div class="grid-2col">
+                    <!-- Left Column -->
+                    <div>
+                        <!-- Technical Summary Card -->
+                        <div class="card">
+                            <h3 style="margin-top: 0; font-size: 15px; color: #8b949e;">LIVE TECHNICAL SUMMARY</h3>
+                            <p style="margin: 5px 0;"><b>HTF Trend:</b> <span class="{% if htf_trend == 'BULLISH' %}text-green{% elif htf_trend == 'BEARISH' %}text-red{% else %}color: #d29922;{% endif %}">{{ htf_trend }}</span></p>
+                            <p style="margin: 5px 0;"><b>Action Signal:</b> <span class="{% if 'CE' in signal_type %}text-green{% elif 'PE' in signal_type %}text-red{% else %}color: #d29922;{% endif %}">{{ signal_type }}</span></p>
+                            <p style="margin: 5px 0; font-size: 13px; color: #8b949e;">RSI: {{ rsi }} | MACD: {{ macd }} | ATR Volatility: {{ atr }}</p>
+                        </div>
+
+                        <!-- Strategy Performance History -->
+                        <div class="card">
+                            <h3 style="margin-top: 0; font-size: 15px; color: #8b949e;">STRATEGY PERFORMANCE HISTORY</h3>
+                            <div class="metrics-grid">
+                                <div class="metric-box">
+                                    <div style="font-size: 11px; color: #8b949e;">Total Trades</div>
+                                    <div class="metric-val">3</div>
+                                </div>
+                                <div class="metric-box">
+                                    <div style="font-size: 11px; color: #8b949e;">Target Hits</div>
+                                    <div class="metric-val text-green">0</div>
+                                </div>
+                                <div class="metric-box">
+                                    <div style="font-size: 11px; color: #8b949e;">SL Hits</div>
+                                    <div class="metric-val text-red">3</div>
+                                </div>
+                                <div class="metric-box">
+                                    <div style="font-size: 11px; color: #8b949e;">Win Rate %</div>
+                                    <div class="metric-val">0%</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Confluence & Filter Breakdown -->
+                        <div class="card">
+                            <h3 style="margin-top: 0; font-size: 15px; color: #8b949e;">CONFLUENCE & FILTER BREAKDOWN</h3>
+                            <div class="filter-tags">
+                                <div class="filter-pill">15M HTF TREND: <span class="{% if htf_trend == 'BULLISH' %}text-green{% else %}text-red{% endif %}">{{ htf_trend }}</span></div>
+                                <div class="filter-pill">50 EMA: <span>{% if spot_price > ema_50 %}Above 50 EMA{% else %}Below 50 EMA{% endif %}</span></div>
+                                <div class="filter-pill">EMA 9/21: <span>{% if ema_9 > ema_21 %}Bullish Cross{% else %}Bearish Cross{% endif %}</span></div>
+                                <div class="filter-pill">RSI QUALITY: <span>{{ rsi }}</span></div>
+                                <div class="filter-pill">MACD STATUS: <span>{% if macd > macd_signal %}Bullish Cross{% else %}Bearish Cross{% endif %}</span></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Right Column -->
+                    <div>
+                        <!-- Confluence & Live Targets Card -->
+                        <div class="card" style="border-color: #30363d;">
+                            <div style="font-size: 11px; color: #8b949e; font-weight: bold;">CONFLUENCE & FILTERS</div>
+                            <div style="text-align: center; margin: 15px 0;">
+                                <div style="font-size: 12px; color: #8b949e;">Confluence Score</div>
+                                <div style="font-size: 32px; font-weight: bold; color: #d29922;">{{ confluence_score }}</div>
+                            </div>
+                            <hr style="border: 0; border-top: 1px solid #21262d; margin: 15px 0;">
+                            <div style="font-size: 12px; margin-bottom: 8px;"><b>Spot Entry Level:</b> ₹{{ spot_entry }}</div>
+                            <div style="font-size: 12px; margin-bottom: 8px;"><b>Spot Stop-Loss:</b> ₹{{ spot_sl }}</div>
+                            <div style="font-size: 12px; margin-bottom: 8px;"><b>Spot Target:</b> ₹{{ spot_target }}</div>
+                            <div style="font-size: 12px; color: #3fb950; font-weight: bold; margin-top: 10px;">Risk : Reward $\rightarrow$ 1 : 2.0</div>
+                        </div>
+
+                        <!-- Locked Option Recommendation -->
+                        <div class="card" style="border: 1px solid #1f6feb;">
+                            <div style="font-size: 11px; color: #58a6ff; font-weight: bold;">🔒 LOCKED OPTION RECOMMENDATION</div>
+                            <div style="margin-top: 12px;">
+                                <div style="font-size: 12px; color: #8b949e;">Recommended Strike</div>
+                                <div style="font-size: 18px; font-weight: bold; color: #f0f6fc; margin-top: 2px;">{{ recommended_strike }}</div>
+                            </div>
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 15px;">
+                                <div style="background: #161b22; padding: 8px; border-radius: 6px;">
+                                    <div style="font-size: 10px; color: #8b949e;">Option Stop-Loss</div>
+                                    <div style="font-size: 13px; font-weight: bold; color: #f85149; margin-top: 2px;">{% if sl_points > 0 %}-{{ sl_points }} pts{% else %}N/A{% endif %}</div>
+                                </div>
+                                <div style="background: #161b22; padding: 8px; border-radius: 6px;">
+                                    <div style="font-size: 10px; color: #8b949e;">Option Target</div>
+                                    <div style="font-size: 13px; font-weight: bold; color: #3fb950; margin-top: 2px;">{% if target_points > 0 %}+{{ target_points }} pts{% else %}N/A{% endif %}</div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
         </body>
         </html>
         """
+        
+        # Formats for display
+        p_change_str = f"+{round(price_change, 2)}" if price_change >= 0 else f"{round(price_change, 2)}"
+        p_change_pct_str = f"+{round(price_change_pct, 2)}" if price_change_pct >= 0 else f"{round(price_change_pct, 2)}"
+
         return render_template_string(html_template, 
                                      spot_price=round(spot_price, 2),
+                                     price_change_formatted=p_change_str,
+                                     price_change_pct_formatted=p_change_pct_str,
                                      htf_trend=htf_trend,
                                      signal_type=signal_type,
                                      recommended_strike=recommended_strike,
@@ -187,7 +299,11 @@ def index():
                                      confluence_score=confluence_score,
                                      rsi=round(rsi, 2),
                                      macd=round(macd, 4),
-                                     atr=round(atr, 2))
+                                     atr=round(atr, 2),
+                                     ema_50=round(ema_50, 2),
+                                     ema_9=round(ema_9, 2),
+                                     ema_21=round(ema_21, 2),
+                                     macd_signal=round(macd_signal, 4))
 
     except Exception as e:
         return jsonify({"error": str(e)})
