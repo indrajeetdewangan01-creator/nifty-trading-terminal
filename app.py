@@ -110,7 +110,6 @@ def index():
 
         # --- TRADE LOCK & TARGET/SL MONITORING LOGIC ---
         if active_trade["status"] == "ACTIVE":
-            # Check if Target or Stop-Loss hit
             if active_trade["signal_type"] == "BUY CE":
                 if spot_price >= active_trade["target"] or spot_price <= active_trade["stop_loss"]:
                     send_telegram_message(f"🏁 *TRADE CLOSED (CE)*\nSpot Price: ₹{spot_price}\nTarget/SL Hit. Lock Released.")
@@ -120,7 +119,6 @@ def index():
                     send_telegram_message(f"🏁 *TRADE CLOSED (PE)*\nSpot Price: ₹{spot_price}\nTarget/SL Hit. Lock Released.")
                     active_trade["status"] = "IDLE"
 
-        # If trade is active, lock display values to the active trade parameters
         if active_trade["status"] == "ACTIVE":
             htf_trend = "LOCKED IN TRADE"
             signal_type = active_trade["signal_type"]
@@ -128,9 +126,8 @@ def index():
             spot_entry = active_trade["entry"]
             spot_sl = active_trade["stop_loss"]
             spot_target = active_trade["target"]
-            confluence_score = 85  # Locked active trade high confidence visual
+            confluence_score = 85
         else:
-            # Generate new signal only if filters are strong (Confluence check)
             if spot_price > ema_50 and ema_9 > ema_21 and macd > macd_signal and rsi > 55:
                 htf_trend = "BULLISH"
                 signal_type = "BUY CE"
@@ -156,7 +153,6 @@ def index():
                 spot_target = 0
                 confluence_score = 35
 
-            # If a valid fresh buy signal occurs, LOCK IT and send Telegram alert ONCE
             if "BUY" in signal_type and active_trade["status"] == "IDLE":
                 active_trade["status"] = "ACTIVE"
                 active_trade["signal_type"] = signal_type
@@ -246,84 +242,4 @@ def index():
                                     <div class="metric-val text-green">0</div>
                                 </div>
                                 <div class="metric-box">
-                                    <div style="font-size: 11px; color: #8b949e;">SL Hits</div>
-                                    <div class="metric-val text-red">3</div>
-                                </div>
-                                <div class="metric-box">
-                                    <div style="font-size: 11px; color: #8b949e;">Win Rate %</div>
-                                    <div class="metric-val">0%</div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="card">
-                            <h3 style="margin-top: 0; font-size: 15px; color: #8b949e;">CONFLUENCE & FILTER BREAKDOWN</h3>
-                            <div class="filter-tags">
-                                <div class="filter-pill">TIMEFRAME: <span>{{ tf|upper }}</span></div>
-                                <div class="filter-pill">50 EMA: <span>{% if spot_price > ema_50 %}Above 50 EMA{% else %}Below 50 EMA{% endif %}</span></div>
-                                <div class="filter-pill">EMA 9/21: <span>{% if ema_9 > ema_21 %}Bullish Cross{% else %}Bearish Cross{% endif %}</span></div>
-                                <div class="filter-pill">RSI QUALITY: <span>{{ rsi }}</span></div>
-                                <div class="filter-pill">MACD STATUS: <span>{% if macd > macd_signal %}Bullish Cross{% else %}Bearish Cross{% endif %}</span></div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div>
-                        <div class="card" style="border-color: #30363d;">
-                            <div style="font-size: 11px; color: #8b949e; font-weight: bold;">CONFLUENCE & FILTERS</div>
-                            <div style="text-align: center; margin: 15px 0;">
-                                <div style="font-size: 12px; color: #8b949e;">Confluence Score</div>
-                                <div style="font-size: 32px; font-weight: bold; color: #d29922;">{{ confluence_score }}</div>
-                            </div>
-                            <hr style="border: 0; border-top: 1px solid #21262d; margin: 15px 0;">
-                            <div style="font-size: 12px; margin-bottom: 8px;"><b>Spot Entry Level:</b> ₹{{ spot_entry }}</div>
-                            <div style="font-size: 12px; margin-bottom: 8px;"><b>Spot Stop-Loss:</b> ₹{{ spot_sl }}</div>
-                            <div style="font-size: 12px; margin-bottom: 8px;"><b>Spot Target:</b> ₹{{ spot_target }}</div>
-                            <div style="font-size: 12px; color: #3fb950; font-weight: bold; margin-top: 10px;">Risk : Reward $\rightarrow$ 1 : 2.0</div>
-                        </div>
-
-                        <div class="card" style="border: 1px solid #1f6feb;">
-                            <div style="font-size: 11px; color: #58a6ff; font-weight: bold;">🔒 LOCKED OPTION RECOMMENDATION</div>
-                            <div style="margin-top: 12px;">
-                                <div style="font-size: 12px; color: #8b949e;">Recommended Strike</div>
-                                <div style="font-size: 18px; font-weight: bold; color: #f0f6fc; margin-top: 2px;">{{ recommended_strike }}</div>
-                            </div>
-                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 15px;">
-                                <div style="background: #161b22; padding: 8px; border-radius: 6px;">
-                                    <div style="font-size: 10px; color: #8b949e;">Option Stop-Loss</div>
-                                    <div style="font-size: 13px; font-weight: bold; color: #f85149; margin-top: 2px;">{% if sl_points > 0 %}-{{ sl_points }} pts{% else %}N/A{% endif %}</div>
-                                </div>
-                                <div style="background: #161b22; padding: 8px; border-radius: 6px;">
-                                    <div style="font-size: 10px; color: #8b949e;">Option Target</div>
-                                    <div style="font-size: 13px; font-weight: bold; color: #3fb950; margin-top: 2px;">{% if target_points > 0 %}+{{ target_points }} pts{% else %}N/A{% endif %}</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </body>
-        </html>
-        """
-        
-        p_change_str = f"+{round(price_change, 2)}" if price_change >= 0 else f"{round(price_change, 2)}"
-        p_change_pct_str = f"+{round(price_change_pct, 2)}" if price_change_pct >= 0 else f"{round(price_change_pct, 2)}"
-
-        return render_template_string(html_template, 
-                                     tf=tf,
-                                     spot_price=round(spot_price, 2),
-                                     price_change=price_change,
-                                     price_change_formatted=p_change_str,
-                                     price_change_pct_formatted=p_change_pct_str,
-                                     htf_trend=htf_trend,
-                                     signal_type=signal_type,
-                                     recommended_strike=recommended_strike,
-                                     spot_entry=round(spot_entry, 2),
-                                     spot_target=round(spot_target, 2),
-                                     spot_sl=round(spot_sl, 2),
-                                     sl_points=sl_points,
-                                     target_points=target_points,
-                                     confluence_score=confluence_score,
-                                     rsi=round(rsi, 2),
-                                     macd=round(macd, 4),
-                                     atr=
+                                    <div style="font
