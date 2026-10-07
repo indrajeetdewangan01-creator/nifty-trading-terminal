@@ -11,6 +11,16 @@ app = Flask(__name__)
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "YOUR_CHAT_ID")
 
+# Global variables for Trade Locking & State Management
+active_trade = {
+    "status": "IDLE",       # IDLE, ACTIVE
+    "signal_type": None,    # BUY CE / BUY PE
+    "strike": None,
+    "entry": 0.0,
+    "target": 0.0,
+    "stop_loss": 0.0
+}
+
 def send_telegram_message(message):
     if TELEGRAM_BOT_TOKEN == "YOUR_BOT_TOKEN":
         return
@@ -26,25 +36,21 @@ def send_telegram_message(message):
         print("Telegram Error:", e)
 
 def calculate_indicators(df):
-    # EMA Calculation
     df['EMA_9'] = df['Close'].ewm(span=9, adjust=False).mean()
     df['EMA_21'] = df['Close'].ewm(span=21, adjust=False).mean()
     df['EMA_50'] = df['Close'].ewm(span=50, adjust=False).mean()
     
-    # RSI Calculation
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / loss
     df['RSI'] = 100 - (100 / (1 + rs))
     
-    # MACD Calculation
     exp1 = df['Close'].ewm(span=12, adjust=False).mean()
     exp2 = df['Close'].ewm(span=26, adjust=False).mean()
     df['MACD'] = exp1 - exp2
     df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
     
-    # ATR (Average True Range) Calculation
     high_low = df['High'] - df['Low']
     high_close = np.abs(df['High'] - df['Close'].shift())
     low_close = np.abs(df['Low'] - df['Close'].shift())
@@ -56,10 +62,9 @@ def calculate_indicators(df):
 
 @app.route('/')
 def index():
+    global active_trade
     try:
-        # Get timeframe from query parameter (default to 5m)
         tf = request.args.get('tf', '5m').lower()
-        
         ticker = "^NSEI"
         data = yf.download(ticker, period="1d", interval="1m", progress=False)
         
@@ -69,7 +74,6 @@ def index():
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
 
-        # Resample data based on selected timeframe
         if tf == '1m':
             pass
         elif tf == '3m':
@@ -84,7 +88,6 @@ def index():
         
         spot_price = float(latest['Close'])
         
-        # Safe Price Change Calculation
         if len(data) >= 2:
             prev = data.iloc[-2]
             prev_close = float(prev['Close'])
@@ -102,67 +105,85 @@ def index():
         macd_signal = float(latest['MACD_Signal']) if not np.isnan(latest['MACD_Signal']) else 0.0
         atr = float(latest['ATR']) if not np.isnan(latest['ATR']) else 25.0
         
-        # Dynamic SL & Target buffer based on ATR
         sl_buffer = max(round(atr * 1.2, 2), 35.0)
         target_buffer = round(sl_buffer * 2.0, 2)
 
-        # Bi-directional Trend Filtering Logic with Enhanced Filters
-        if spot_price > ema_50 and ema_9 > ema_21 and macd > macd_signal and rsi > 50:
-            htf_trend = "BULLISH"
-            signal_type = "BUY CE"
-            recommended_strike = f"{round(spot_price / 50) * 50} CE"
-            spot_entry = spot_price
-            spot_sl = spot_price - sl_buffer
-            spot_target = spot_price + target_buffer
-        elif spot_price < ema_50 and ema_9 < ema_21 and macd < macd_signal and rsi < 50:
-            htf_trend = "BEARISH"
-            signal_type = "BUY PE"
-            recommended_strike = f"{round(spot_price / 50) * 50} PE"
-            spot_entry = spot_price
-            spot_sl = spot_price + sl_buffer
-            spot_target = spot_price - target_buffer
+        # --- TRADE LOCK & TARGET/SL MONITORING LOGIC ---
+        if active_trade["status"] == "ACTIVE":
+            # Check if Target or Stop-Loss hit
+            if active_trade["signal_type"] == "BUY CE":
+                if spot_price >= active_trade["target"] or spot_price <= active_trade["stop_loss"]:
+                    send_telegram_message(f"🏁 *TRADE CLOSED (CE)*\nSpot Price: ₹{spot_price}\nTarget/SL Hit. Lock Released.")
+                    active_trade["status"] = "IDLE"
+            elif active_trade["signal_type"] == "BUY PE":
+                if spot_price <= active_trade["target"] or spot_price >= active_trade["stop_loss"]:
+                    send_telegram_message(f"🏁 *TRADE CLOSED (PE)*\nSpot Price: ₹{spot_price}\nTarget/SL Hit. Lock Released.")
+                    active_trade["status"] = "IDLE"
+
+        # If trade is active, lock display values to the active trade parameters
+        if active_trade["status"] == "ACTIVE":
+            htf_trend = "LOCKED IN TRADE"
+            signal_type = active_trade["signal_type"]
+            recommended_strike = active_trade["strike"]
+            spot_entry = active_trade["entry"]
+            spot_sl = active_trade["stop_loss"]
+            spot_target = active_trade["target"]
+            confluence_score = 85  # Locked active trade high confidence visual
         else:
-            htf_trend = "SIDEWAYS / CHOPPY"
-            signal_type = "WAIT / LOW CONFLUENCE"
-            recommended_strike = "N/A"
-            spot_entry = spot_price
-            spot_sl = 0
-            spot_target = 0
+            # Generate new signal only if filters are strong (Confluence check)
+            if spot_price > ema_50 and ema_9 > ema_21 and macd > macd_signal and rsi > 55:
+                htf_trend = "BULLISH"
+                signal_type = "BUY CE"
+                recommended_strike = f"{round(spot_price / 50) * 50} CE"
+                spot_entry = spot_price
+                spot_sl = spot_price - sl_buffer
+                spot_target = spot_price + target_buffer
+                confluence_score = 80
+            elif spot_price < ema_50 and ema_9 < ema_21 and macd < macd_signal and rsi < 45:
+                htf_trend = "BEARISH"
+                signal_type = "BUY PE"
+                recommended_strike = f"{round(spot_price / 50) * 50} PE"
+                spot_entry = spot_price
+                spot_sl = spot_price + sl_buffer
+                spot_target = spot_price - target_buffer
+                confluence_score = 80
+            else:
+                htf_trend = "SIDEWAYS / CHOPPY"
+                signal_type = "WAIT / LOW CONFLUENCE"
+                recommended_strike = "N/A"
+                spot_entry = spot_price
+                spot_sl = 0
+                spot_target = 0
+                confluence_score = 35
 
-        # Confluence Score calculation
-        confluence_score = 50
-        if htf_trend == "BULLISH":
-            confluence_score += 30
-        elif htf_trend == "BEARISH":
-            confluence_score -= 30
-            
-        if rsi > 55:
-            confluence_score += 15
-        elif rsi < 45:
-            confluence_score -= 15
+            # If a valid fresh buy signal occurs, LOCK IT and send Telegram alert ONCE
+            if "BUY" in signal_type and active_trade["status"] == "IDLE":
+                active_trade["status"] = "ACTIVE"
+                active_trade["signal_type"] = signal_type
+                active_trade["strike"] = recommended_strike
+                active_trade["entry"] = spot_entry
+                active_trade["target"] = spot_target
+                active_trade["stop_loss"] = spot_sl
 
-        confluence_score = max(0, min(100, confluence_score))
+                sl_pts = round(abs(spot_entry - spot_sl), 2)
+                tgt_pts = round(abs(spot_target - spot_entry), 2)
+                msg = (f"🚨 *SMART NIFTY LOCKED SIGNAL* 🚨\n\n"
+                       f"Signal: {signal_type}\n"
+                       f"Strike: {recommended_strike}\n"
+                       f"Spot Entry: ₹{round(spot_entry, 2)}\n"
+                       f"Spot StopLoss: ₹{round(spot_sl, 2)} (-{sl_pts} pts)\n"
+                       f"Spot Target: ₹{round(spot_target, 2)} (+{tgt_pts} pts)\n"
+                       f"Status: Trade Locked until Target/SL!")
+                send_telegram_message(msg)
 
         sl_points = round(abs(spot_entry - spot_sl), 2) if spot_sl > 0 else 0
         target_points = round(abs(spot_target - spot_entry), 2) if spot_target > 0 else 0
 
-        # Telegram Alert with Dynamic Points
-        if "BUY" in signal_type:
-            msg = (f"🚨 *SMART NIFTY SIGNAL* 🚨\n\n"
-                   f"Signal: {signal_type}\n"
-                   f"Strike: {recommended_strike}\n"
-                   f"Spot Entry: ₹{round(spot_entry, 2)}\n"
-                   f"Spot StopLoss: ₹{round(spot_sl, 2)} (-{sl_points} pts)\n"
-                   f"Spot Target: ₹{round(spot_target, 2)} (+{target_points} pts)\n"
-                   f"Confluence Score: {confluence_score}/100")
-            send_telegram_message(msg)
-
-        # HTML Pro Dashboard Template
         html_template = """
         <!DOCTYPE html>
         <html>
         <head>
-            <title>Nifty 50 Pro Terminal - Smart Bi-Directional</title>
+            <title>Nifty 50 Pro Terminal - Locked Trade System</title>
             <meta http-equiv="refresh" content="60">
             <style>
                 body { background-color: #0b0e14; color: #c9d1d9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 15px; }
@@ -187,7 +208,6 @@ def index():
         </head>
         <body>
             <div class="container">
-                <!-- Top Header -->
                 <div class="card header-card">
                     <div>
                         <div style="font-size: 12px; color: #8b949e; font-weight: bold;">NIFTY 50 PRO TERMINAL</div>
@@ -206,9 +226,7 @@ def index():
                 </div>
 
                 <div class="grid-2col">
-                    <!-- Left Column -->
                     <div>
-                        <!-- Technical Summary Card -->
                         <div class="card">
                             <h3 style="margin-top: 0; font-size: 15px; color: #8b949e;">LIVE TECHNICAL SUMMARY ({{ tf|upper }})</h3>
                             <p style="margin: 5px 0;"><b>HTF Trend:</b> <span class="{% if htf_trend == 'BULLISH' %}text-green{% elif htf_trend == 'BEARISH' %}text-red{% else %}color: #d29922;{% endif %}">{{ htf_trend }}</span></p>
@@ -216,7 +234,6 @@ def index():
                             <p style="margin: 5px 0; font-size: 13px; color: #8b949e;">RSI: {{ rsi }} | MACD: {{ macd }} | ATR Volatility: {{ atr }}</p>
                         </div>
 
-                        <!-- Strategy Performance History -->
                         <div class="card">
                             <h3 style="margin-top: 0; font-size: 15px; color: #8b949e;">STRATEGY PERFORMANCE HISTORY</h3>
                             <div class="metrics-grid">
@@ -239,7 +256,6 @@ def index():
                             </div>
                         </div>
 
-                        <!-- Confluence & Filter Breakdown -->
                         <div class="card">
                             <h3 style="margin-top: 0; font-size: 15px; color: #8b949e;">CONFLUENCE & FILTER BREAKDOWN</h3>
                             <div class="filter-tags">
@@ -252,9 +268,7 @@ def index():
                         </div>
                     </div>
 
-                    <!-- Right Column -->
                     <div>
-                        <!-- Confluence & Live Targets Card -->
                         <div class="card" style="border-color: #30363d;">
                             <div style="font-size: 11px; color: #8b949e; font-weight: bold;">CONFLUENCE & FILTERS</div>
                             <div style="text-align: center; margin: 15px 0;">
@@ -268,7 +282,6 @@ def index():
                             <div style="font-size: 12px; color: #3fb950; font-weight: bold; margin-top: 10px;">Risk : Reward $\rightarrow$ 1 : 2.0</div>
                         </div>
 
-                        <!-- Locked Option Recommendation -->
                         <div class="card" style="border: 1px solid #1f6feb;">
                             <div style="font-size: 11px; color: #58a6ff; font-weight: bold;">🔒 LOCKED OPTION RECOMMENDATION</div>
                             <div style="margin-top: 12px;">
@@ -293,7 +306,6 @@ def index():
         </html>
         """
         
-        # Formats for display
         p_change_str = f"+{round(price_change, 2)}" if price_change >= 0 else f"{round(price_change, 2)}"
         p_change_pct_str = f"+{round(price_change_pct, 2)}" if price_change_pct >= 0 else f"{round(price_change_pct, 2)}"
 
@@ -314,14 +326,4 @@ def index():
                                      confluence_score=confluence_score,
                                      rsi=round(rsi, 2),
                                      macd=round(macd, 4),
-                                     atr=round(atr, 2),
-                                     ema_50=round(ema_50, 2),
-                                     ema_9=round(ema_9, 2),
-                                     ema_21=round(ema_21, 2),
-                                     macd_signal=round(macd_signal, 4))
-
-    except Exception as e:
-        return jsonify({"error": str(e)})
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+                                     atr=
