@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Nifty 50 Pro Terminal - Locked Trade System</title>
+    <meta http-equiv="refresh" content="60">
+    <style>
+        body { background-color: #0b0e14; color: #c9d1d9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 15px; }
+        .container { max-width: 1200px; margin: auto; }
+        .card { background: #121821; border: 1px solid #21262d; border-radius: 10px; padding: 15px; margin-bottom: 15px; }
+        .header-card { display: flex; justify-content: space-between; align-items: center; background: #161b22; }
+        .price-title { font-size: 22px; font-weight: bold; color: #f0f6fc; }
+        .text-green { color: #3fb950; }
+        .text-red { color: #f85149; }
+        .timeframe-tabs { display: flex; gap: 5px; }
+        .tf-btn { background: #21262d; border: 1px solid #30363d; color: #8b949e; padding: 6px 12px; border-radius: 4px; font-weight: bold; cursor: pointer; text-decoration: none; display: inline-block; text-align: center; }
+        .tf-btn.active { background: #1f6feb; color: #ffffff; border-color: #1f6feb; }
+        .grid-2col { display: grid; grid-template-columns: 2fr 1fr; gap: 15px; }
+        @media (max-width: 900px) { .grid-2col { grid-template-columns: 1fr; } }
+        .metrics-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 10px; }
+        .metric-box { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 10px; text-align: center; }
+        .metric-val { font-size: 16px; font-weight: bold; margin-top: 4px; }
+        .filter-tags { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+        .filter-pill { background: #161b22; border: 1px solid #30363d; padding: 6px 10px; border-radius: 6px; font-size: 12px; }
+        .filter-pill span { font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="card header-card">
+            <div>
+                <div style="font-size: 12px; color: #8b949e; font-weight: bold;">NIFTY 50 PRO TERMINAL</div>
+                <div class="price-title">Rs. {{ spot_price }} 
+                    <span style="font-size: 14px;" class="{% if price_change >= 0 %}text-green{% else %}text-red{% endif %}">
+                        {{ price_change_formatted }} ({{ price_change_pct_formatted }}%)
+                    </span>
+                </div>
+            </div>
+            <div class="timeframe-tabs">
+                <a href="/?tf=1m" class="tf-btn {% if tf == '1m' %}active{% endif %}">1M</a>
+                <a href="/?tf=3m" class="tf-btn {% if tf == '3m' %}active{% endif %}">3M</a>
+                <a href="/?tf=5m" class="tf-btn {% if tf == '5m' %}active{% endif %}">5M</a>
+                <a href="/?tf=15m" class="tf-btn {% if tf == '15m' %}active{% endif %}">15M</a>
+            </div>
+        </div>
+
+        <div class="grid-2col">
+            <div>
+                <div class="card">
+                    <h3 style="margin-top: 0; font-size: 15px; color: #8b949e;">LIVE TECHNICAL SUMMARY ({{ tf|upper }})</h3>
+                    <p style="margin: 5px 0;"><b>HTF Trend:</b> <span class="{% if htf_trend == 'BULLISH' %}text-green{% elif htf_trend == 'BEARISH' %}text-red{% else %}color: #d29922;{% endif %}">{{ htf_trend }}</span></p>
+                    <p style="margin: 5px 0;"><b>Action Signal:</b> <span class="{% if 'CE' in signal_type %}text-green{% elif 'PE' in signal_type %}text-red{% else %}color: #d29922;{% endif %}">{{ signal_type }}</span></p>
+                    <p style="margin: 5px 0; font-size: 13px; color: #8b949e;">RSI: {{ rsi }} | MACD: {{ macd }} | ATR Volatility: {{ atr }}</p>
+                </div>
+
+                <div class="card">
+                    <h3 style="margin-top: 0; font-size: 15px; color: #8b949e;">STRATEGY PERFORMANCE HISTORY</h3>
+                    <div class="metrics-grid">
+                        <div class="metric-box">
+                            <div style="font-size: 11px; color: #8b949e;">Total Trades</div>
+                            <div class="metric-val">3</div>
+                        </div>
+                        <div class="metric-box">
+                            <div style="font-size: 11px; color: #8b949e;">Target Hits</div>
+                            <div class="metric-val text-green">0</div>
+                        </div>
+                        <div class="metric-box">
+                            <div style="font-size: 11px; color: #8b949e;">SL Hits</div>
+                            <div class="metric-val text-red">3</div>
+                        </div>
+                        <div class="metric-box">
+                            <div style="font-size: 11px; color: #8b949e;">Win Rate %</div>
+                            <div class="metric-val">0%</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3 style="margin-top: 0; font-size: 15px; color: #8b949e;">CONFLUENCE & FILTER BREAKDOWN</h3>
+                    <div class="filter-tags">
+                        <div class="filter-pill">TIMEFRAME: <span>{{ tf|upper }}</span></div>
+                        <div class="filter-pill">50 EMA: <span>{% if spot_price > ema_50 %}Above 50 EMA{% else %}Below 50 EMA{% endif %}</span></div>
+                        <div class="filter-pill">EMA 9/21: <span>{% if ema_9 > ema_21 %}Bullish Cross{% else %}Bearish Cross{% endif %}</span></div>
+                        <div class="filter-pill">RSI QUALITY: <span>{{ rsi }}</span></div>
+                        <div class="filter-pill">MACD STATUS: <span>{% if macd > macd_signal %}Bullish Cross{% else %}Bearish Cross{% endif %}</span></div>
+                    </div>
+                </div>
+            </div>
+
+            <div>
+                <div class="card" style="border-color: #30363d;">
+                    <div style="font-size: 11px; color: #8b949e; font-weight: bold;">CONFLUENCE & FILTERS</div>
+                    <div style="text-align: center; margin: 15px 0;">
+                        <div style="font-size: 12px; color: #8b949e;">Confluence Score</div>
+                        <div style="font-size: 32px; font-weight: bold; color: #d29922;">{{ confluence_score }}</div>
+                    </div>
+                    <hr style="border: 0; border-top: 1px solid #21262d; margin: 15px 0;">
+                    <div style="font-size: 12px; margin-bottom: 8px;"><b>Spot Entry Level:</b> Rs. {{ spot_entry }}</div>
+                    <div style="font-size: 12px; margin-bottom: 8px;"><b>Spot Stop-Loss:</b> Rs. {{ spot_sl }}</div>
+                    <div style="font-size: 12px; margin-bottom: 8px;"><b>Spot Target:</b> Rs. {{ spot_target }}</div>
+                    <div style="font-size: 12px; color: #3fb950; font-weight: bold; margin-top: 10px;">Risk : Reward &rarr; 1 : 2.0</div>
+                </div>
+
+                <div class="card" style="border: 1px solid #1f6feb;">
+                    <div style="font-size: 11px; color: #58a6ff; font-weight: bold;">LOCKED OPTION RECOMMENDATION</div>
+                    <div style="margin-top: 12px;">
+                        <div style="font-size: 12px; color: #8b949e;">Recommended Strike</div>
+                        <div style="font-size: 18px; font-weight: bold; color: #f0f6fc; margin-top: 2px;">{{ recommended_strike }}</div>
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 15px;">
+                        <div style="background: #161b22; padding: 8px; border-radius: 6px;">
+                            <div style="font-size: 10px; color: #8b949e;">Option Stop-Loss</div>
+                            <div style="font-size: 13px; font-weight: bold; color: #f85149; margin-top: 2px;">{% if sl_points > 0 %}-{{ sl_points }} pts{% else %}N/A{% endif %}</div>
+                        </div>
+                        <div style="background: #161b22; padding: 8px; border-radius: 6px;">
+                            <div style="font-size: 10px; color: #8b949e;">Option Target</div>
+                            <div style="font-size: 13px; font-weight: bold; color: #3fb950; margin-top: 2px;">{% if target_points > 0 %}+{{ target_points }} pts{% else %}N/A{% endif %}</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
