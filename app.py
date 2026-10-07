@@ -11,14 +11,12 @@ app = Flask(__name__)
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "YOUR_CHAT_ID")
 
-# Global variables for Trade Locking & State Management
-active_trade = {
-    "status": "IDLE",       # IDLE, ACTIVE
-    "signal_type": None,    # BUY CE / BUY PE
-    "strike": None,
-    "entry": 0.0,
-    "target": 0.0,
-    "stop_loss": 0.0
+# Dictionary to manage independent trade locks for each timeframe
+active_trades = {
+    "1m": {"status": "IDLE", "signal_type": None, "strike": None, "entry": 0.0, "target": 0.0, "stop_loss": 0.0},
+    "3m": {"status": "IDLE", "signal_type": None, "strike": None, "entry": 0.0, "target": 0.0, "stop_loss": 0.0},
+    "5m": {"status": "IDLE", "signal_type": None, "strike": None, "entry": 0.0, "target": 0.0, "stop_loss": 0.0},
+    "15m": {"status": "IDLE", "signal_type": None, "strike": None, "entry": 0.0, "target": 0.0, "stop_loss": 0.0}
 }
 
 def send_telegram_message(message):
@@ -62,9 +60,12 @@ def calculate_indicators(df):
 
 @app.route('/')
 def index():
-    global active_trade
+    global active_trades
     try:
-        tf = request.args.get('tf', '5m').lower()
+        tf = request.args.get('tf', '1m').lower()
+        if tf not in active_trades:
+            tf = '1m'
+            
         ticker = "^NSEI"
         data = yf.download(ticker, period="1d", interval="1m", progress=False)
         
@@ -103,73 +104,74 @@ def index():
         rsi = float(latest['RSI']) if not np.isnan(latest['RSI']) else 50.0
         macd = float(latest['MACD']) if not np.isnan(latest['MACD']) else 0.0
         macd_signal = float(latest['MACD_Signal']) if not np.isnan(latest['MACD_Signal']) else 0.0
-        atr = float(latest['ATR']) if not np.isnan(latest['ATR']) else 25.0
+        atr = float(latest['ATR']) if not np.isnan(latest['ATR']) else 15.0
         
-        sl_buffer = max(round(atr * 1.2, 2), 35.0)
+        # Adjust SL buffers tighter for 1m and 3m timeframes
+        if tf == '1m':
+            sl_buffer = max(round(atr * 0.8, 2), 12.0)
+        elif tf == '3m':
+            sl_buffer = max(round(atr * 1.0, 2), 18.0)
+        else:
+            sl_buffer = max(round(atr * 1.5, 2), 35.0)
+            
         target_buffer = round(sl_buffer * 2.0, 2)
 
-        # --- TRADE LOCK & TARGET/SL MONITORING LOGIC ---
-        if active_trade["status"] == "ACTIVE":
-            if active_trade["signal_type"] == "BUY CE":
-                if spot_price >= active_trade["target"] or spot_price <= active_trade["stop_loss"]:
-                    send_telegram_message(f"🏁 *TRADE CLOSED (CE)*\nSpot Price: ₹{spot_price}\nTarget/SL Hit. Lock Released.")
-                    active_trade["status"] = "IDLE"
-            elif active_trade["signal_type"] == "BUY PE":
-                if spot_price <= active_trade["target"] or spot_price >= active_trade["stop_loss"]:
-                    send_telegram_message(f"🏁 *TRADE CLOSED (PE)*\nSpot Price: ₹{spot_price}\nTarget/SL Hit. Lock Released.")
-                    active_trade["status"] = "IDLE"
+        current_trade = active_trades[tf]
 
-        if active_trade["status"] == "ACTIVE":
-            htf_trend = "LOCKED IN TRADE"
-            signal_type = active_trade["signal_type"]
-            recommended_strike = active_trade["strike"]
-            spot_entry = active_trade["entry"]
-            spot_sl = active_trade["stop_loss"]
-            spot_target = active_trade["target"]
+        # --- MONITOR ACTIVE TRADE FOR THIS TIMEFRAME ---
+        if current_trade["status"] == "ACTIVE":
+            if current_trade["signal_type"] == "BUY CE":
+                if spot_price >= current_trade["target"] or spot_price <= current_trade["stop_loss"]:
+                    current_trade["status"] = "IDLE"
+            elif current_trade["signal_type"] == "BUY PE":
+                if spot_price <= current_trade["target"] or spot_price >= current_trade["stop_loss"]:
+                    current_trade["status"] = "IDLE"
+
+        if current_trade["status"] == "ACTIVE":
+            htf_trend = f"LOCKED ({tf.upper()})"
+            signal_type = current_trade["signal_type"]
+            recommended_strike = current_trade["strike"]
+            spot_entry = current_trade["entry"]
+            spot_sl = current_trade["stop_loss"]
+            spot_target = current_trade["target"]
             confluence_score = 85
         else:
-            if spot_price > ema_50 and ema_9 > ema_21 and macd > macd_signal and rsi > 55:
+            if spot_price > ema_50 and ema_9 > ema_21 and rsi > 50:
                 htf_trend = "BULLISH"
                 signal_type = "BUY CE"
                 recommended_strike = f"{round(spot_price / 50) * 50} CE"
                 spot_entry = spot_price
                 spot_sl = spot_price - sl_buffer
                 spot_target = spot_price + target_buffer
-                confluence_score = 80
-            elif spot_price < ema_50 and ema_9 < ema_21 and macd < macd_signal and rsi < 45:
+                confluence_score = 78
+            elif spot_price < ema_50 and ema_9 < ema_21 and rsi < 50:
                 htf_trend = "BEARISH"
                 signal_type = "BUY PE"
                 recommended_strike = f"{round(spot_price / 50) * 50} PE"
                 spot_entry = spot_price
                 spot_sl = spot_price + sl_buffer
                 spot_target = spot_price - target_buffer
-                confluence_score = 80
+                confluence_score = 78
             else:
-                htf_trend = "SIDEWAYS / CHOPPY"
-                signal_type = "WAIT / LOW CONFLUENCE"
+                htf_trend = "SIDEWAYS"
+                signal_type = "WAIT / NO TRADE"
                 recommended_strike = "N/A"
                 spot_entry = spot_price
                 spot_sl = 0
                 spot_target = 0
-                confluence_score = 35
+                confluence_score = 40
 
-            if "BUY" in signal_type and active_trade["status"] == "IDLE":
-                active_trade["status"] = "ACTIVE"
-                active_trade["signal_type"] = signal_type
-                active_trade["strike"] = recommended_strike
-                active_trade["entry"] = spot_entry
-                active_trade["target"] = spot_target
-                active_trade["stop_loss"] = spot_sl
+            if "BUY" in signal_type and current_trade["status"] == "IDLE":
+                current_trade["status"] = "ACTIVE"
+                current_trade["signal_type"] = signal_type
+                current_trade["strike"] = recommended_strike
+                current_trade["entry"] = spot_entry
+                current_trade["target"] = spot_target
+                current_trade["stop_loss"] = spot_sl
 
                 sl_pts = round(abs(spot_entry - spot_sl), 2)
                 tgt_pts = round(abs(spot_target - spot_entry), 2)
-                msg = (f"🚨 *SMART NIFTY LOCKED SIGNAL* 🚨\n\n"
-                       f"Signal: {signal_type}\n"
-                       f"Strike: {recommended_strike}\n"
-                       f"Spot Entry: ₹{round(spot_entry, 2)}\n"
-                       f"Spot StopLoss: ₹{round(spot_sl, 2)} (-{sl_pts} pts)\n"
-                       f"Spot Target: ₹{round(spot_target, 2)} (+{tgt_pts} pts)\n"
-                       f"Status: Trade Locked until Target/SL!")
+                msg = (f"🚨 *NIFTY {tf.upper()} SIGNAL* 🚨\nSignal: {signal_type}\nStrike: {recommended_strike}\nEntry: ₹{round(spot_entry, 2)}\nSL: ₹{round(spot_sl, 2)} (-{sl_pts} pts)\nTarget: ₹{round(spot_target, 2)} (+{tgt_pts} pts)")
                 send_telegram_message(msg)
 
         sl_points = round(abs(spot_entry - spot_sl), 2) if spot_sl > 0 else 0
