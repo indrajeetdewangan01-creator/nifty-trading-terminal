@@ -1,4 +1,4 @@
-from flask import Flask, render_template_string, jsonify, request
+from flask import Flask, render_template, jsonify, request
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -174,68 +174,35 @@ def index():
 
         sl_points = round(abs(spot_entry - spot_sl), 2) if spot_sl > 0 else 0
         target_points = round(abs(spot_target - spot_entry), 2) if spot_target > 0 else 0
+        
+        p_change_str = f"+{round(price_change, 2)}" if price_change >= 0 else f"{round(price_change, 2)}"
+        p_change_pct_str = f"+{round(price_change_pct, 2)}" if price_change_pct >= 0 else f"{round(price_change_pct, 2)}"
 
-        html_template = """<!DOCTYPE html>
-<html>
-<head>
-    <title>Nifty 50 Pro Terminal - Locked Trade System</title>
-    <meta http-equiv="refresh" content="60">
-    <style>
-        body { background-color: #0b0e14; color: #c9d1d9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 15px; }
-        .container { max-width: 1200px; margin: auto; }
-        .card { background: #121821; border: 1px solid #21262d; border-radius: 10px; padding: 15px; margin-bottom: 15px; }
-        .header-card { display: flex; justify-content: space-between; align-items: center; background: #161b22; }
-        .price-title { font-size: 22px; font-weight: bold; color: #f0f6fc; }
-        .text-green { color: #3fb950; }
-        .text-red { color: #f85149; }
-        .timeframe-tabs { display: flex; gap: 5px; }
-        .tf-btn { background: #21262d; border: 1px solid #30363d; color: #8b949e; padding: 6px 12px; border-radius: 4px; font-weight: bold; cursor: pointer; text-decoration: none; display: inline-block; text-align: center; }
-        .tf-btn.active { background: #1f6feb; color: #ffffff; border-color: #1f6feb; }
-        .grid-2col { display: grid; grid-template-columns: 2fr 1fr; gap: 15px; }
-        @media (max-width: 900px) { .grid-2col { grid-template-columns: 1fr; } }
-        .metrics-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 10px; }
-        .metric-box { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 10px; text-align: center; }
-        .metric-val { font-size: 16px; font-weight: bold; margin-top: 4px; }
-        .filter-tags { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-        .filter-pill { background: #161b22; border: 1px solid #30363d; padding: 6px 10px; border-radius: 6px; font-size: 12px; }
-        .filter-pill span { font-weight: bold; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="card header-card">
-            <div>
-                <div style="font-size: 12px; color: #8b949e; font-weight: bold;">NIFTY 50 PRO TERMINAL</div>
-                <div class="price-title">Rs. {{ spot_price }} 
-                    <span style="font-size: 14px;" class="{% if price_change >= 0 %}text-green{% else %}text-red{% endif %}">
-                        {{ price_change_formatted }} ({{ price_change_pct_formatted }}%)
-                    </span>
-                </div>
-            </div>
-            <div class="timeframe-tabs">
-                <a href="/?tf=1m" class="tf-btn {% if tf == '1m' %}active{% endif %}">1M</a>
-                <a href="/?tf=3m" class="tf-btn {% if tf == '3m' %}active{% endif %}">3M</a>
-                <a href="/?tf=5m" class="tf-btn {% if tf == '5m' %}active{% endif %}">5M</a>
-                <a href="/?tf=15m" class="tf-btn {% if tf == '15m' %}active{% endif %}">15M</a>
-            </div>
-        </div>
+        return render_template('index.html', 
+                                     tf=tf,
+                                     spot_price=round(spot_price, 2),
+                                     price_change=price_change,
+                                     price_change_formatted=p_change_str,
+                                     price_change_pct_formatted=p_change_pct_str,
+                                     htf_trend=htf_trend,
+                                     signal_type=signal_type,
+                                     recommended_strike=recommended_strike,
+                                     spot_entry=round(spot_entry, 2),
+                                     spot_target=round(spot_target, 2),
+                                     spot_sl=round(spot_sl, 2),
+                                     sl_points=sl_points,
+                                     target_points=target_points,
+                                     confluence_score=confluence_score,
+                                     rsi=round(rsi, 2),
+                                     macd=round(macd, 4),
+                                     atr=round(atr, 2),
+                                     ema_50=round(ema_50, 2),
+                                     ema_9=round(ema_9, 2),
+                                     ema_21=round(ema_21, 2),
+                                     macd_signal=round(macd_signal, 4))
 
-        <div class="grid-2col">
-            <div>
-                <div class="card">
-                    <h3 style="margin-top: 0; font-size: 15px; color: #8b949e;">LIVE TECHNICAL SUMMARY ({{ tf|upper }})</h3>
-                    <p style="margin: 5px 0;"><b>HTF Trend:</b> <span class="{% if htf_trend == 'BULLISH' %}text-green{% elif htf_trend == 'BEARISH' %}text-red{% else %}color: #d29922;{% endif %}">{{ htf_trend }}</span></p>
-                    <p style="margin: 5px 0;"><b>Action Signal:</b> <span class="{% if 'CE' in signal_type %}text-green{% elif 'PE' in signal_type %}text-red{% else %}color: #d29922;{% endif %}">{{ signal_type }}</span></p>
-                    <p style="margin: 5px 0; font-size: 13px; color: #8b949e;">RSI: {{ rsi }} | MACD: {{ macd }} | ATR Volatility: {{ atr }}</p>
-                </div>
+    except Exception as e:
+        return jsonify({"error": str(e)})
 
-                <div class="card">
-                    <h3 style="margin-top: 0; font-size: 15px; color: #8b949e;">STRATEGY PERFORMANCE HISTORY</h3>
-                    <div class="metrics-grid">
-                        <div class="metric-box">
-                            <div style="font-size: 11px; color: #8b949e;">Total Trades</div>
-                            <div class="metric-val">3</div>
-                        </div>
-                        <div class="metric-box">
-                            <div style="font-size: 11px; color: #8b949e;">Target Hits</div>
-                            <div class
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
