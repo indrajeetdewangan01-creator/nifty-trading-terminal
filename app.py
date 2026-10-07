@@ -175,71 +175,67 @@ def index():
         sl_points = round(abs(spot_entry - spot_sl), 2) if spot_sl > 0 else 0
         target_points = round(abs(spot_target - spot_entry), 2) if spot_target > 0 else 0
 
-        html_template = """
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Nifty 50 Pro Terminal - Locked Trade System</title>
-            <meta http-equiv="refresh" content="60">
-            <style>
-                body { background-color: #0b0e14; color: #c9d1d9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 15px; }
-                .container { max-width: 1200px; margin: auto; }
-                .card { background: #121821; border: 1px solid #21262d; border-radius: 10px; padding: 15px; margin-bottom: 15px; }
-                .header-card { display: flex; justify-content: space-between; align-items: center; background: #161b22; }
-                .price-title { font-size: 22px; font-weight: bold; color: #f0f6fc; }
-                .text-green { color: #3fb950; }
-                .text-red { color: #f85149; }
-                .timeframe-tabs { display: flex; gap: 5px; }
-                .tf-btn { background: #21262d; border: 1px solid #30363d; color: #8b949e; padding: 6px 12px; border-radius: 4px; font-weight: bold; cursor: pointer; text-decoration: none; display: inline-block; text-align: center; }
-                .tf-btn.active { background: #1f6feb; color: #ffffff; border-color: #1f6feb; }
-                .grid-2col { display: grid; grid-template-columns: 2fr 1fr; gap: 15px; }
-                @media (max-width: 900px) { .grid-2col { grid-template-columns: 1fr; } }
-                .metrics-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 10px; }
-                .metric-box { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 10px; text-align: center; }
-                .metric-val { font-size: 16px; font-weight: bold; margin-top: 4px; }
-                .filter-tags { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-                .filter-pill { background: #161b22; border: 1px solid #30363d; padding: 6px 10px; border-radius: 6px; font-size: 12px; }
-                .filter-pill span { font-weight: bold; }
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <div class="card header-card">
-                    <div>
-                        <div style="font-size: 12px; color: #8b949e; font-weight: bold;">NIFTY 50 PRO TERMINAL</div>
-                        <div class="price-title">₹{{ spot_price }} 
-                            <span style="font-size: 14px;" class="{% if price_change >= 0 %}text-green{% else %}text-red{% endif %}">
-                                {{ price_change_formatted }} ({{ price_change_pct_formatted }}%)
-                            </span>
-                        </div>
-                    </div>
-                    <div class="timeframe-tabs">
-                        <a href="/?tf=1m" class="tf-btn {% if tf == '1m' %}active{% endif %}">1M</a>
-                        <a href="/?tf=3m" class="tf-btn {% if tf == '3m' %}active{% endif %}">3M</a>
-                        <a href="/?tf=5m" class="tf-btn {% if tf == '5m' %}active{% endif %}">5M</a>
-                        <a href="/?tf=15m" class="tf-btn {% if tf == '15m' %}active{% endif %}">15M</a>
-                    </div>
+        html_template = """<!DOCTYPE html>
+<html>
+<head>
+    <title>Nifty 50 Pro Terminal - Locked Trade System</title>
+    <meta http-equiv="refresh" content="60">
+    <style>
+        body { background-color: #0b0e14; color: #c9d1d9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 15px; }
+        .container { max-width: 1200px; margin: auto; }
+        .card { background: #121821; border: 1px solid #21262d; border-radius: 10px; padding: 15px; margin-bottom: 15px; }
+        .header-card { display: flex; justify-content: space-between; align-items: center; background: #161b22; }
+        .price-title { font-size: 22px; font-weight: bold; color: #f0f6fc; }
+        .text-green { color: #3fb950; }
+        .text-red { color: #f85149; }
+        .timeframe-tabs { display: flex; gap: 5px; }
+        .tf-btn { background: #21262d; border: 1px solid #30363d; color: #8b949e; padding: 6px 12px; border-radius: 4px; font-weight: bold; cursor: pointer; text-decoration: none; display: inline-block; text-align: center; }
+        .tf-btn.active { background: #1f6feb; color: #ffffff; border-color: #1f6feb; }
+        .grid-2col { display: grid; grid-template-columns: 2fr 1fr; gap: 15px; }
+        @media (max-width: 900px) { .grid-2col { grid-template-columns: 1fr; } }
+        .metrics-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 10px; }
+        .metric-box { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 10px; text-align: center; }
+        .metric-val { font-size: 16px; font-weight: bold; margin-top: 4px; }
+        .filter-tags { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+        .filter-pill { background: #161b22; border: 1px solid #30363d; padding: 6px 10px; border-radius: 6px; font-size: 12px; }
+        .filter-pill span { font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="card header-card">
+            <div>
+                <div style="font-size: 12px; color: #8b949e; font-weight: bold;">NIFTY 50 PRO TERMINAL</div>
+                <div class="price-title">Rs. {{ spot_price }} 
+                    <span style="font-size: 14px;" class="{% if price_change >= 0 %}text-green{% else %}text-red{% endif %}">
+                        {{ price_change_formatted }} ({{ price_change_pct_formatted }}%)
+                    </span>
+                </div>
+            </div>
+            <div class="timeframe-tabs">
+                <a href="/?tf=1m" class="tf-btn {% if tf == '1m' %}active{% endif %}">1M</a>
+                <a href="/?tf=3m" class="tf-btn {% if tf == '3m' %}active{% endif %}">3M</a>
+                <a href="/?tf=5m" class="tf-btn {% if tf == '5m' %}active{% endif %}">5M</a>
+                <a href="/?tf=15m" class="tf-btn {% if tf == '15m' %}active{% endif %}">15M</a>
+            </div>
+        </div>
+
+        <div class="grid-2col">
+            <div>
+                <div class="card">
+                    <h3 style="margin-top: 0; font-size: 15px; color: #8b949e;">LIVE TECHNICAL SUMMARY ({{ tf|upper }})</h3>
+                    <p style="margin: 5px 0;"><b>HTF Trend:</b> <span class="{% if htf_trend == 'BULLISH' %}text-green{% elif htf_trend == 'BEARISH' %}text-red{% else %}color: #d29922;{% endif %}">{{ htf_trend }}</span></p>
+                    <p style="margin: 5px 0;"><b>Action Signal:</b> <span class="{% if 'CE' in signal_type %}text-green{% elif 'PE' in signal_type %}text-red{% else %}color: #d29922;{% endif %}">{{ signal_type }}</span></p>
+                    <p style="margin: 5px 0; font-size: 13px; color: #8b949e;">RSI: {{ rsi }} | MACD: {{ macd }} | ATR Volatility: {{ atr }}</p>
                 </div>
 
-                <div class="grid-2col">
-                    <div>
-                        <div class="card">
-                            <h3 style="margin-top: 0; font-size: 15px; color: #8b949e;">LIVE TECHNICAL SUMMARY ({{ tf|upper }})</h3>
-                            <p style="margin: 5px 0;"><b>HTF Trend:</b> <span class="{% if htf_trend == 'BULLISH' %}text-green{% elif htf_trend == 'BEARISH' %}text-red{% else %}color: #d29922;{% endif %}">{{ htf_trend }}</span></p>
-                            <p style="margin: 5px 0;"><b>Action Signal:</b> <span class="{% if 'CE' in signal_type %}text-green{% elif 'PE' in signal_type %}text-red{% else %}color: #d29922;{% endif %}">{{ signal_type }}</span></p>
-                            <p style="margin: 5px 0; font-size: 13px; color: #8b949e;">RSI: {{ rsi }} | MACD: {{ macd }} | ATR Volatility: {{ atr }}</p>
+                <div class="card">
+                    <h3 style="margin-top: 0; font-size: 15px; color: #8b949e;">STRATEGY PERFORMANCE HISTORY</h3>
+                    <div class="metrics-grid">
+                        <div class="metric-box">
+                            <div style="font-size: 11px; color: #8b949e;">Total Trades</div>
+                            <div class="metric-val">3</div>
                         </div>
-
-                        <div class="card">
-                            <h3 style="margin-top: 0; font-size: 15px; color: #8b949e;">STRATEGY PERFORMANCE HISTORY</h3>
-                            <div class="metrics-grid">
-                                <div class="metric-box">
-                                    <div style="font-size: 11px; color: #8b949e;">Total Trades</div>
-                                    <div class="metric-val">3</div>
-                                </div>
-                                <div class="metric-box">
-                                    <div style="font-size: 11px; color: #8b949e;">Target Hits</div>
-                                    <div class="metric-val text-green">0</div>
-                                </div>
-                                <div class="metric-box">
-                                    <div style="font
+                        <div class="metric-box">
+                            <div style="font-size: 11px; color: #8b949e;">Target Hits</div>
+                            <div class
