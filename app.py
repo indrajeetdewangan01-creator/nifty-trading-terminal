@@ -11,12 +11,10 @@ app = Flask(__name__)
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "YOUR_CHAT_ID")
 
-# Dictionary to manage independent trade locks for each timeframe
+# Independent trade locks restricted strictly for 1m and 3m scalping
 active_trades = {
     "1m": {"status": "IDLE", "signal_type": None, "strike": None, "entry": 0.0, "target": 0.0, "stop_loss": 0.0},
-    "3m": {"status": "IDLE", "signal_type": None, "strike": None, "entry": 0.0, "target": 0.0, "stop_loss": 0.0},
-    "5m": {"status": "IDLE", "signal_type": None, "strike": None, "entry": 0.0, "target": 0.0, "stop_loss": 0.0},
-    "15m": {"status": "IDLE", "signal_type": None, "strike": None, "entry": 0.0, "target": 0.0, "stop_loss": 0.0}
+    "3m": {"status": "IDLE", "signal_type": None, "strike": None, "entry": 0.0, "target": 0.0, "stop_loss": 0.0}
 }
 
 def send_telegram_message(message):
@@ -34,8 +32,8 @@ def send_telegram_message(message):
         print("Telegram Error:", e)
 
 def calculate_indicators(df):
-    df['EMA_9'] = df['Close'].ewm(span=9, adjust=False).mean()
-    df['EMA_21'] = df['Close'].ewm(span=21, adjust=False).mean()
+    df['EMA_5'] = df['Close'].ewm(span=5, adjust=False).mean()
+    df['EMA_13'] = df['Close'].ewm(span=13, adjust=False).mean()
     df['EMA_50'] = df['Close'].ewm(span=50, adjust=False).mean()
     
     delta = df['Close'].diff()
@@ -62,8 +60,9 @@ def calculate_indicators(df):
 def index():
     global active_trades
     try:
+        # Force/Default to 1m if any other timeframe is requested
         tf = request.args.get('tf', '1m').lower()
-        if tf not in active_trades:
+        if tf not in ['1m', '3m']:
             tf = '1m'
             
         ticker = "^NSEI"
@@ -75,14 +74,8 @@ def index():
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
 
-        if tf == '1m':
-            pass
-        elif tf == '3m':
+        if tf == '3m':
             data = data.resample('3min').agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}).dropna()
-        elif tf == '5m':
-            data = data.resample('5min').agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}).dropna()
-        elif tf == '15m':
-            data = data.resample('15min').agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}).dropna()
 
         data = calculate_indicators(data)
         latest = data.iloc[-1]
@@ -98,27 +91,25 @@ def index():
             price_change = 0.0
             price_change_pct = 0.0
 
-        ema_9 = float(latest['EMA_9']) if not np.isnan(latest['EMA_9']) else spot_price
-        ema_21 = float(latest['EMA_21']) if not np.isnan(latest['EMA_21']) else spot_price
+        ema_5 = float(latest['EMA_5']) if not np.isnan(latest['EMA_5']) else spot_price
+        ema_13 = float(latest['EMA_13']) if not np.isnan(latest['EMA_13']) else spot_price
         ema_50 = float(latest['EMA_50']) if not np.isnan(latest['EMA_50']) else spot_price
         rsi = float(latest['RSI']) if not np.isnan(latest['RSI']) else 50.0
         macd = float(latest['MACD']) if not np.isnan(latest['MACD']) else 0.0
         macd_signal = float(latest['MACD_Signal']) if not np.isnan(latest['MACD_Signal']) else 0.0
-        atr = float(latest['ATR']) if not np.isnan(latest['ATR']) else 15.0
+        atr = float(latest['ATR']) if not np.isnan(latest['ATR']) else 10.0
         
-        # Adjust SL buffers tighter for 1m and 3m timeframes
+        # Ultra-tight scalp buffers for 1m and 3m (Small SL & quick targets)
         if tf == '1m':
-            sl_buffer = max(round(atr * 0.8, 2), 12.0)
-        elif tf == '3m':
-            sl_buffer = max(round(atr * 1.0, 2), 18.0)
-        else:
-            sl_buffer = max(round(atr * 1.5, 2), 35.0)
+            sl_buffer = max(round(atr * 0.5, 2), 8.0)
+        else:  # 3m
+            sl_buffer = max(round(atr * 0.7, 2), 12.0)
             
-        target_buffer = round(sl_buffer * 2.0, 2)
+        target_buffer = round(sl_buffer * 1.5, 2) # Quick 1:1.5 Risk-Reward for scalp
 
         current_trade = active_trades[tf]
 
-        # --- MONITOR ACTIVE TRADE FOR THIS TIMEFRAME ---
+        # --- MONITOR ACTIVE TRADE ---
         if current_trade["status"] == "ACTIVE":
             if current_trade["signal_type"] == "BUY CE":
                 if spot_price >= current_trade["target"] or spot_price <= current_trade["stop_loss"]:
@@ -128,38 +119,39 @@ def index():
                     current_trade["status"] = "IDLE"
 
         if current_trade["status"] == "ACTIVE":
-            htf_trend = f"LOCKED ({tf.upper()})"
+            htf_trend = f"SCALP LOCKED ({tf.upper()})"
             signal_type = current_trade["signal_type"]
             recommended_strike = current_trade["strike"]
             spot_entry = current_trade["entry"]
             spot_sl = current_trade["stop_loss"]
             spot_target = current_trade["target"]
-            confluence_score = 85
+            confluence_score = 88
         else:
-            if spot_price > ema_50 and ema_9 > ema_21 and rsi > 50:
-                htf_trend = "BULLISH"
+            # Sensitive scalping conditions using fast EMA 5/13 crossover
+            if ema_5 > ema_13 and rsi > 45:
+                htf_trend = "BULLISH SCALP"
                 signal_type = "BUY CE"
                 recommended_strike = f"{round(spot_price / 50) * 50} CE"
                 spot_entry = spot_price
                 spot_sl = spot_price - sl_buffer
                 spot_target = spot_price + target_buffer
-                confluence_score = 78
-            elif spot_price < ema_50 and ema_9 < ema_21 and rsi < 50:
-                htf_trend = "BEARISH"
+                confluence_score = 82
+            elif ema_5 < ema_13 and rsi < 55:
+                htf_trend = "BEARISH SCALP"
                 signal_type = "BUY PE"
                 recommended_strike = f"{round(spot_price / 50) * 50} PE"
                 spot_entry = spot_price
                 spot_sl = spot_price + sl_buffer
                 spot_target = spot_price - target_buffer
-                confluence_score = 78
+                confluence_score = 82
             else:
-                htf_trend = "SIDEWAYS"
+                htf_trend = "SCANNING SCALP"
                 signal_type = "WAIT / NO TRADE"
                 recommended_strike = "N/A"
                 spot_entry = spot_price
                 spot_sl = 0
                 spot_target = 0
-                confluence_score = 40
+                confluence_score = 50
 
             if "BUY" in signal_type and current_trade["status"] == "IDLE":
                 current_trade["status"] = "ACTIVE"
@@ -171,7 +163,7 @@ def index():
 
                 sl_pts = round(abs(spot_entry - spot_sl), 2)
                 tgt_pts = round(abs(spot_target - spot_entry), 2)
-                msg = (f"🚨 *NIFTY {tf.upper()} SIGNAL* 🚨\nSignal: {signal_type}\nStrike: {recommended_strike}\nEntry: ₹{round(spot_entry, 2)}\nSL: ₹{round(spot_sl, 2)} (-{sl_pts} pts)\nTarget: ₹{round(spot_target, 2)} (+{tgt_pts} pts)")
+                msg = (f"⚡ *NIFTY {tf.upper()} SCALP SIGNAL* ⚡\nSignal: {signal_type}\nStrike: {recommended_strike}\nEntry: ₹{round(spot_entry, 2)}\nSL: ₹{round(spot_sl, 2)} (-{sl_pts} pts)\nTarget: ₹{round(spot_target, 2)} (+{tgt_pts} pts)")
                 send_telegram_message(msg)
 
         sl_points = round(abs(spot_entry - spot_sl), 2) if spot_sl > 0 else 0
@@ -199,8 +191,8 @@ def index():
                                      macd=round(macd, 4),
                                      atr=round(atr, 2),
                                      ema_50=round(ema_50, 2),
-                                     ema_9=round(ema_9, 2),
-                                     ema_21=round(ema_21, 2),
+                                     ema_9=round(ema_5, 2),
+                                     ema_21=round(ema_13, 2),
                                      macd_signal=round(macd_signal, 4))
 
     except Exception as e:
