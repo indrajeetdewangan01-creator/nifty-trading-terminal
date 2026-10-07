@@ -60,7 +60,7 @@ def index():
         ticker = "^NSEI"
         data = yf.download(ticker, period="1d", interval="1m", progress=False)
         
-        if data.empty or len(data) < 50:
+        if data.empty or len(data) < 2:
             return "Fetching market data, please refresh..."
 
         if isinstance(data.columns, pd.MultiIndex):
@@ -68,16 +68,22 @@ def index():
 
         data = calculate_indicators(data)
         latest = data.iloc[-1]
-        prev = data.iloc[-2]
         
         spot_price = float(latest['Close'])
-        prev_close = float(prev['Close'])
-        price_change = spot_price - prev_close
-        price_change_pct = (price_change / prev_close) * 100
+        
+        # Safe Price Change Calculation
+        if len(data) >= 2:
+            prev = data.iloc[-2]
+            prev_close = float(prev['Close'])
+            price_change = spot_price - prev_close
+            price_change_pct = (price_change / prev_close) * 100
+        else:
+            price_change = 0.0
+            price_change_pct = 0.0
 
-        ema_9 = float(latest['EMA_9'])
-        ema_21 = float(latest['EMA_21'])
-        ema_50 = float(latest['EMA_50'])
+        ema_9 = float(latest['EMA_9']) if not np.isnan(latest['EMA_9']) else spot_price
+        ema_21 = float(latest['EMA_21']) if not np.isnan(latest['EMA_21']) else spot_price
+        ema_50 = float(latest['EMA_50']) if not np.isnan(latest['EMA_50']) else spot_price
         rsi = float(latest['RSI']) if not np.isnan(latest['RSI']) else 50.0
         macd = float(latest['MACD']) if not np.isnan(latest['MACD']) else 0.0
         macd_signal = float(latest['MACD_Signal']) if not np.isnan(latest['MACD_Signal']) else 0.0
@@ -151,7 +157,6 @@ def index():
                 .card { background: #121821; border: 1px solid #21262d; border-radius: 10px; padding: 15px; margin-bottom: 15px; }
                 .header-card { display: flex; justify-content: space-between; align-items: center; background: #161b22; }
                 .price-title { font-size: 22px; font-weight: bold; color: #f0f6fc; }
-                .price-sub { font-size: 14px; margin-top: 5px; }
                 .text-green { color: #3fb950; }
                 .text-red { color: #f85149; }
                 .timeframe-tabs { display: flex; gap: 5px; }
@@ -162,11 +167,6 @@ def index():
                 .metrics-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 10px; }
                 .metric-box { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 10px; text-align: center; }
                 .metric-val { font-size: 16px; font-weight: bold; margin-top: 4px; }
-                .table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
-                .table th, .table td { padding: 8px; text-align: left; border-bottom: 1px solid #21262d; }
-                .table th { color: #8b949e; }
-                .badge-ce { background: rgba(63, 185, 80, 0.15); color: #3fb950; padding: 3px 8px; border-radius: 4px; font-weight: bold; }
-                .badge-pe { background: rgba(248, 81, 73, 0.15); color: #f85149; padding: 3px 8px; border-radius: 4px; font-weight: bold; }
                 .filter-tags { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
                 .filter-pill { background: #161b22; border: 1px solid #30363d; padding: 6px 10px; border-radius: 6px; font-size: 12px; }
                 .filter-pill span { font-weight: bold; }
@@ -286,6 +286,7 @@ def index():
 
         return render_template_string(html_template, 
                                      spot_price=round(spot_price, 2),
+                                     price_change=price_change,
                                      price_change_formatted=p_change_str,
                                      price_change_pct_formatted=p_change_pct_str,
                                      htf_trend=htf_trend,
