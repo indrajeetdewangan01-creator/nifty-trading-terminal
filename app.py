@@ -1,4 +1,4 @@
-from flask import Flask, render_template_string, jsonify
+from flask import Flask, render_template_string, jsonify, request
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -57,6 +57,9 @@ def calculate_indicators(df):
 @app.route('/')
 def index():
     try:
+        # Get timeframe from query parameter (default to 5m)
+        tf = request.args.get('tf', '5m').lower()
+        
         ticker = "^NSEI"
         data = yf.download(ticker, period="1d", interval="1m", progress=False)
         
@@ -65,6 +68,16 @@ def index():
 
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
+
+        # Resample data based on selected timeframe
+        if tf == '1m':
+            pass
+        elif tf == '3m':
+            data = data.resample('3min').agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}).dropna()
+        elif tf == '5m':
+            data = data.resample('5min').agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}).dropna()
+        elif tf == '15m':
+            data = data.resample('15min').agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}).dropna()
 
         data = calculate_indicators(data)
         latest = data.iloc[-1]
@@ -144,7 +157,7 @@ def index():
                    f"Confluence Score: {confluence_score}/100")
             send_telegram_message(msg)
 
-        # HTML Pro Dashboard Template matching original user layout
+        # HTML Pro Dashboard Template
         html_template = """
         <!DOCTYPE html>
         <html>
@@ -160,8 +173,8 @@ def index():
                 .text-green { color: #3fb950; }
                 .text-red { color: #f85149; }
                 .timeframe-tabs { display: flex; gap: 5px; }
-                .tf-btn { background: #21262d; border: none; color: #8b949e; padding: 6px 12px; border-radius: 4px; font-weight: bold; cursor: pointer; }
-                .tf-btn.active { background: #1f6feb; color: #ffffff; }
+                .tf-btn { background: #21262d; border: 1px solid #30363d; color: #8b949e; padding: 6px 12px; border-radius: 4px; font-weight: bold; cursor: pointer; text-decoration: none; display: inline-block; text-align: center; }
+                .tf-btn.active { background: #1f6feb; color: #ffffff; border-color: #1f6feb; }
                 .grid-2col { display: grid; grid-template-columns: 2fr 1fr; gap: 15px; }
                 @media (max-width: 900px) { .grid-2col { grid-template-columns: 1fr; } }
                 .metrics-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 10px; }
@@ -185,10 +198,10 @@ def index():
                         </div>
                     </div>
                     <div class="timeframe-tabs">
-                        <button class="tf-btn">1M</button>
-                        <button class="tf-btn">3M</button>
-                        <button class="tf-btn active">5M</button>
-                        <button class="tf-btn">15M</button>
+                        <a href="/?tf=1m" class="tf-btn {% if tf == '1m' %}active{% endif %}">1M</a>
+                        <a href="/?tf=3m" class="tf-btn {% if tf == '3m' %}active{% endif %}">3M</a>
+                        <a href="/?tf=5m" class="tf-btn {% if tf == '5m' %}active{% endif %}">5M</a>
+                        <a href="/?tf=15m" class="tf-btn {% if tf == '15m' %}active{% endif %}">15M</a>
                     </div>
                 </div>
 
@@ -197,7 +210,7 @@ def index():
                     <div>
                         <!-- Technical Summary Card -->
                         <div class="card">
-                            <h3 style="margin-top: 0; font-size: 15px; color: #8b949e;">LIVE TECHNICAL SUMMARY</h3>
+                            <h3 style="margin-top: 0; font-size: 15px; color: #8b949e;">LIVE TECHNICAL SUMMARY ({{ tf|upper }})</h3>
                             <p style="margin: 5px 0;"><b>HTF Trend:</b> <span class="{% if htf_trend == 'BULLISH' %}text-green{% elif htf_trend == 'BEARISH' %}text-red{% else %}color: #d29922;{% endif %}">{{ htf_trend }}</span></p>
                             <p style="margin: 5px 0;"><b>Action Signal:</b> <span class="{% if 'CE' in signal_type %}text-green{% elif 'PE' in signal_type %}text-red{% else %}color: #d29922;{% endif %}">{{ signal_type }}</span></p>
                             <p style="margin: 5px 0; font-size: 13px; color: #8b949e;">RSI: {{ rsi }} | MACD: {{ macd }} | ATR Volatility: {{ atr }}</p>
@@ -230,7 +243,7 @@ def index():
                         <div class="card">
                             <h3 style="margin-top: 0; font-size: 15px; color: #8b949e;">CONFLUENCE & FILTER BREAKDOWN</h3>
                             <div class="filter-tags">
-                                <div class="filter-pill">15M HTF TREND: <span class="{% if htf_trend == 'BULLISH' %}text-green{% else %}text-red{% endif %}">{{ htf_trend }}</span></div>
+                                <div class="filter-pill">TIMEFRAME: <span>{{ tf|upper }}</span></div>
                                 <div class="filter-pill">50 EMA: <span>{% if spot_price > ema_50 %}Above 50 EMA{% else %}Below 50 EMA{% endif %}</span></div>
                                 <div class="filter-pill">EMA 9/21: <span>{% if ema_9 > ema_21 %}Bullish Cross{% else %}Bearish Cross{% endif %}</span></div>
                                 <div class="filter-pill">RSI QUALITY: <span>{{ rsi }}</span></div>
@@ -285,6 +298,7 @@ def index():
         p_change_pct_str = f"+{round(price_change_pct, 2)}" if price_change_pct >= 0 else f"{round(price_change_pct, 2)}"
 
         return render_template_string(html_template, 
+                                     tf=tf,
                                      spot_price=round(spot_price, 2),
                                      price_change=price_change,
                                      price_change_formatted=p_change_str,
