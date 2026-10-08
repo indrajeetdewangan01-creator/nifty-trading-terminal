@@ -1,9 +1,10 @@
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify
 import yfinance as yf
 import pandas as pd
-import numpy as np
 import requests
 import os
+import threading
+import time
 
 app = Flask(__name__)
 
@@ -11,16 +12,7 @@ app = Flask(__name__)
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "YOUR_CHAT_ID")
 
-# Single Global Trade Lock to prevent multiple opposite signals at the same time
-global_trade = {
-    "status": "IDLE",       # IDLE or ACTIVE
-    "timeframe": None,      # '1m' or '3m'
-    "signal_type": None,    # 'BUY CE' or 'BUY PE'
-    "strike": None,
-    "entry": 0.0,
-    "target": 0.0,
-    "stop_loss": 0.0
-}
+last_alert_time = None
 
 def send_telegram_message(message):
     if TELEGRAM_BOT_TOKEN == "YOUR_BOT_TOKEN":
@@ -36,166 +28,76 @@ def send_telegram_message(message):
     except Exception as e:
         print("Telegram Error:", e)
 
-def calculate_indicators(df):
-    df['EMA_5'] = df['Close'].ewm(span=5, adjust=False).mean()
-    df['EMA_13'] = df['Close'].ewm(span=13, adjust=False).mean()
-    df['EMA_50'] = df['Close'].ewm(span=50, adjust=False).mean()
-    
-    delta = df['Close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rs = gain / loss
-    df['RSI'] = 100 - (100 / (1 + rs))
-    
-    exp1 = df['Close'].ewm(span=12, adjust=False).mean()
-    exp2 = df['Close'].ewm(span=26, adjust=False).mean()
-    df['MACD'] = exp1 - exp2
-    df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
-    
-    high_low = df['High'] - df['Low']
-    high_close = np.abs(df['High'] - df['Close'].shift())
-    low_close = np.abs(df['Low'] - df['Close'].shift())
-    ranges = pd.concat([high_low, high_close, low_close], axis=1)
-    true_range = np.max(ranges, axis=1)
-    df['ATR'] = true_range.rolling(14).mean()
-    
-    return df
-
-@app.route('/')
-def index():
-    global global_trade
+def analyze_market():
+    global last_alert_time
     try:
-        tf = request.args.get('tf', '1m').lower()
-        if tf not in ['1m', '3m']:
-            tf = '1m'
-            
         ticker = "^NSEI"
         data = yf.download(ticker, period="1d", interval="1m", progress=False)
         
-        if data.empty or len(data) < 2:
-            return "Fetching market data, please refresh..."
+        if data.empty or len(data) < 3:
+            return "WAIT / NO TRADE", 0.0, ""
 
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
 
-        if tf == '3m':
-            data = data.resample('3min').agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}).dropna()
-
-        data = calculate_indicators(data)
-        latest = data.iloc[-1]
+        # Last 3 candles analysis for 1-minute timeframe
+        c1_open, c1_close = data['Open'].iloc[-3], data['Close'].iloc[-3]
+        c2_open, c2_close, c2_high, c2_low = data['Open'].iloc[-2], data['Close'].iloc[-2], data['High'].iloc[-2], data['Low'].iloc[-2]
+        c3_open, c3_close = data['Open'].iloc[-1], data['Close'].iloc[-1]
         
-        spot_price = float(latest['Close'])
-        
-        if len(data) >= 2:
-            prev = data.iloc[-2]
-            prev_close = float(prev['Close'])
-            price_change = spot_price - prev_close
-            price_change_pct = (price_change / prev_close) * 100
-        else:
-            price_change = 0.0
-            price_change_pct = 0.0
+        current_time = str(data.index[-1])
+        spot_price = float(c3_close)
 
-        ema_5 = float(latest['EMA_5']) if not np.isnan(latest['EMA_5']) else spot_price
-        ema_13 = float(latest['EMA_13']) if not np.isnan(latest['EMA_13']) else spot_price
-        ema_50 = float(latest['EMA_50']) if not np.isnan(latest['EMA_50']) else spot_price
-        rsi = float(latest['RSI']) if not np.isnan(latest['RSI']) else 50.0
-        macd = float(latest['MACD']) if not np.isnan(latest['MACD']) else 0.0
-        macd_signal = float(latest['MACD_Signal']) if not np.isnan(latest['MACD_Signal']) else 0.0
-        atr = float(latest['ATR']) if not np.isnan(latest['ATR']) else 15.0
-        
-        # Realistic Stop Loss & Targets for Nifty Spot (Safe from 1-second noise)
-        sl_buffer = max(round(atr * 1.5, 2), 30.0)    # Minimum 30 points SL
-        target_buffer = round(sl_buffer * 2.0, 2)     # 1:2 Risk-Reward (60+ points target)
+        # 1. Bearish Pattern: Red -> Green -> Red (Below Green Low)
+        is_bear_c1 = c1_close < c1_open
+        is_bear_c2 = c2_close > c2_open
+        is_bear_c3 = c3_close < c3_open
+        is_bear_below = c3_close < c2_low
+        bearish_matched = is_bear_c1 and is_bear_c2 and is_bear_c3 and is_bear_below
 
-        # --- MONITOR GLOBAL ACTIVE TRADE ---
-        if global_trade["status"] == "ACTIVE":
-            if global_trade["signal_type"] == "BUY CE":
-                if spot_price >= global_trade["target"] or spot_price <= global_trade["stop_loss"]:
-                    global_trade["status"] = "IDLE"
-            elif global_trade["signal_type"] == "BUY PE":
-                if spot_price <= global_trade["target"] or spot_price >= global_trade["stop_loss"]:
-                    global_trade["status"] = "IDLE"
+        # 2. Bullish Pattern: Green -> Red -> Green (Above Red High)
+        is_bull_c1 = c1_close > c1_open
+        is_bull_c2 = c2_close < c2_open
+        is_bull_c3 = c3_close > c3_open
+        is_bull_above = c3_close > c2_high
+        bullish_matched = is_bull_c1 and is_bull_c2 and is_bull_c3 and is_bull_above
 
-        if global_trade["status"] == "ACTIVE":
-            htf_trend = f"LOCKED ({global_trade['timeframe'].upper()})"
-            signal_type = global_trade["signal_type"]
-            recommended_strike = global_trade["strike"]
-            spot_entry = global_trade["entry"]
-            spot_sl = global_trade["stop_loss"]
-            spot_target = global_trade["target"]
-            confluence_score = 85
-        else:
-            if ema_5 > ema_13 and rsi > 45:
-                htf_trend = "BULLISH"
-                signal_type = "BUY CE"
-                recommended_strike = f"{round(spot_price / 50) * 50} CE"
-                spot_entry = spot_price
-                spot_sl = spot_price - sl_buffer
-                spot_target = spot_price + target_buffer
-                confluence_score = 80
-            elif ema_5 < ema_13 and rsi < 55:
-                htf_trend = "BEARISH"
-                signal_type = "BUY PE"
-                recommended_strike = f"{round(spot_price / 50) * 50} PE"
-                spot_entry = spot_price
-                spot_sl = spot_price + sl_buffer
-                spot_target = spot_price - target_buffer
-                confluence_score = 80
-            else:
-                htf_trend = "SCANNING"
-                signal_type = "WAIT / NO TRADE"
-                recommended_strike = "N/A"
-                spot_entry = spot_price
-                spot_sl = 0
-                spot_target = 0
-                confluence_score = 45
+        signal_type = "WAIT / NO TRADE"
 
-            # Lock trade globally if found and currently idle
-            if "BUY" in signal_type and global_trade["status"] == "IDLE":
-                global_trade["status"] = "ACTIVE"
-                global_trade["timeframe"] = tf
-                global_trade["signal_type"] = signal_type
-                global_trade["strike"] = recommended_strike
-                global_trade["entry"] = spot_entry
-                global_trade["target"] = spot_target
-                global_trade["stop_loss"] = spot_sl
-
-                sl_pts = round(abs(spot_entry - spot_sl), 2)
-                tgt_pts = round(abs(spot_target - spot_entry), 2)
-                msg = (f"🚀 *NIFTY {tf.upper()} SIGNAL* 🚀\nSignal: {signal_type}\nStrike: {recommended_strike}\nEntry: ₹{round(spot_entry, 2)}\nSL: ₹{round(spot_sl, 2)} (-{sl_pts} pts)\nTarget: ₹{round(spot_target, 2)} (+{tgt_pts} pts)")
+        if bearish_matched:
+            signal_type = "BEARISH PATTERN (BUY PE)"
+            if last_alert_time != current_time:
+                last_alert_time = current_time
+                msg = f"🚨 *NIFTY 1M BEARISH ALERT* 🚨\nSetup: Red ➔ Green ➔ Red (Below Green)\nSpot Price: ₹{round(spot_price, 2)}\nTime: {current_time}"
+                send_telegram_message(msg)
+        elif bullish_matched:
+            signal_type = "BULLISH PATTERN (BUY CE)"
+            if last_alert_time != current_time:
+                last_alert_time = current_time
+                msg = f"🚨 *NIFTY 1M BULLISH ALERT* 🚨\nSetup: Green ➔ Red ➔ Green (Above Red)\nSpot Price: ₹{round(spot_price, 2)}\nTime: {current_time}"
                 send_telegram_message(msg)
 
-        sl_points = round(abs(spot_entry - spot_sl), 2) if spot_sl > 0 else 0
-        target_points = round(abs(spot_target - spot_entry), 2) if spot_target > 0 else 0
-        
-        p_change_str = f"+{round(price_change, 2)}" if price_change >= 0 else f"{round(price_change, 2)}"
-        p_change_pct_str = f"+{round(price_change_pct, 2)}" if price_change_pct >= 0 else f"{round(price_change_pct, 2)}"
-
-        return render_template('index.html', 
-                                     tf=tf,
-                                     spot_price=round(spot_price, 2),
-                                     price_change=price_change,
-                                     price_change_formatted=p_change_str,
-                                     price_change_pct_formatted=p_change_pct_str,
-                                     htf_trend=htf_trend,
-                                     signal_type=signal_type,
-                                     recommended_strike=recommended_strike,
-                                     spot_entry=round(spot_entry, 2),
-                                     spot_target=round(spot_target, 2),
-                                     spot_sl=round(spot_sl, 2),
-                                     sl_points=sl_points,
-                                     target_points=target_points,
-                                     confluence_score=confluence_score,
-                                     rsi=round(rsi, 2),
-                                     macd=round(macd, 4),
-                                     atr=round(atr, 2),
-                                     ema_50=round(ema_50, 2),
-                                     ema_9=round(ema_5, 2),
-                                     ema_21=round(ema_13, 2),
-                                     macd_signal=round(macd_signal, 4))
+        return signal_type, spot_price, current_time
 
     except Exception as e:
-        return jsonify({"error": str(e)})
+        print("Analysis Error:", e)
+        return "ERROR", 0.0, ""
+
+def background_scanner():
+    while True:
+        analyze_market()
+        time.sleep(60) # Har 1 minute mein automatic check karega
+
+# Background thread jo bina site khole background mein chalta rahega
+threading.Thread(target=background_scanner, daemon=True).start()
+
+@app.route('/')
+def index():
+    signal_type, spot_price, current_time = analyze_market()
+    return render_template('index.html', 
+                           spot_price=spot_price,
+                           signal_type=signal_type,
+                           current_time=current_time)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
