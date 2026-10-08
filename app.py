@@ -35,14 +35,14 @@ def analyze_market():
         data = yf.download(ticker, period="1d", interval="1m", progress=False)
         
         if data is None or data.empty or len(data) < 3:
-            return "WAIT / NO TRADE", 0.0, 0.0, "+0.00", "+0.00%", ""
+            return "WAIT / NO TRADE", 0.0, 0.0, "+0.00", "+0.00%", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ""
 
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
 
         required_cols = ['Open', 'High', 'Low', 'Close']
         if not all(col in data.columns for col in required_cols):
-            return "WAIT / NO TRADE", 0.0, 0.0, "+0.00", "+0.00%", ""
+            return "WAIT / NO TRADE", 0.0, 0.0, "+0.00", "+0.00%", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ""
 
         c1_open = float(data['Open'].iloc[-3])
         c1_close = float(data['Close'].iloc[-3])
@@ -58,7 +58,6 @@ def analyze_market():
         spot_price = c3_close
         current_time = str(data.index[-1])
 
-        # Price change calculation for template
         prev_close = float(data['Close'].iloc[-2])
         price_change = spot_price - prev_close
         price_change_pct = (price_change / prev_close) * 100
@@ -95,11 +94,11 @@ def analyze_market():
                 msg = f"🚨 *NIFTY 1M BULLISH ALERT* 🚨\nSetup: Green ➔ Red ➔ Green (Above Red)\nSpot Price: ₹{round(spot_price, 2)}\nTime: {current_time}"
                 send_telegram_message(msg)
 
-        return signal_type, spot_price, price_change, p_change_str, p_change_pct_str, current_time
+        return signal_type, spot_price, price_change, p_change_str, p_change_pct_str, 50.0, 0.0, 10.0, spot_price, spot_price, spot_price, current_time
 
     except Exception as e:
         print("Analysis Error:", e)
-        return "WAIT / NO TRADE", 0.0, 0.0, "+0.00", "+0.00%", ""
+        return "WAIT / NO TRADE", 0.0, 0.0, "+0.00", "+0.00%", 50.0, 0.0, 10.0, 0.0, 0.0, 0.0, ""
 
 def background_scanner():
     while True:
@@ -111,13 +110,20 @@ threading.Thread(target=background_scanner, daemon=True).start()
 @app.route('/')
 def index():
     try:
-        signal_type, spot_price, price_change, p_change_str, p_change_pct_str, current_time = analyze_market()
+        res = analyze_market()
+        signal_type, spot_price, price_change, p_change_str, p_change_pct_str, rsi, macd, atr, ema_50, ema_9, ema_21, current_time = res
         return render_template('index.html', 
                                spot_price=spot_price,
                                signal_type=signal_type,
                                price_change=price_change,
                                price_change_formatted=p_change_str,
                                price_change_pct_formatted=p_change_pct_str,
+                               rsi=rsi,
+                               macd=macd,
+                               atr=atr,
+                               ema_50=ema_50,
+                               ema_9=ema_9,
+                               ema_21=ema_21,
                                current_time=current_time)
     except Exception as e:
         return f"App Loading... Please refresh. (Error: {str(e)})"
