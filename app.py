@@ -35,15 +35,14 @@ def analyze_market():
         data = yf.download(ticker, period="1d", interval="1m", progress=False)
         
         if data is None or data.empty or len(data) < 3:
-            return "WAIT / NO TRADE", 0.0, ""
+            return "WAIT / NO TRADE", 0.0, 0.0, "+0.00", "+0.00%", ""
 
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
 
-        # Ensure required columns exist
         required_cols = ['Open', 'High', 'Low', 'Close']
         if not all(col in data.columns for col in required_cols):
-            return "WAIT / NO TRADE", 0.0, ""
+            return "WAIT / NO TRADE", 0.0, 0.0, "+0.00", "+0.00%", ""
 
         c1_open = float(data['Open'].iloc[-3])
         c1_close = float(data['Close'].iloc[-3])
@@ -56,8 +55,16 @@ def analyze_market():
         c3_open = float(data['Open'].iloc[-1])
         c3_close = float(data['Close'].iloc[-1])
         
-        current_time = str(data.index[-1])
         spot_price = c3_close
+        current_time = str(data.index[-1])
+
+        # Price change calculation for template
+        prev_close = float(data['Close'].iloc[-2])
+        price_change = spot_price - prev_close
+        price_change_pct = (price_change / prev_close) * 100
+        
+        p_change_str = f"+{round(price_change, 2)}" if price_change >= 0 else f"{round(price_change, 2)}"
+        p_change_pct_str = f"+{round(price_change_pct, 2)}%" if price_change_pct >= 0 else f"{round(price_change_pct, 2)}%"
 
         # 1. Bearish Pattern: Red -> Green -> Red (Below Green Low)
         is_bear_c1 = c1_close < c1_open
@@ -88,11 +95,11 @@ def analyze_market():
                 msg = f"🚨 *NIFTY 1M BULLISH ALERT* 🚨\nSetup: Green ➔ Red ➔ Green (Above Red)\nSpot Price: ₹{round(spot_price, 2)}\nTime: {current_time}"
                 send_telegram_message(msg)
 
-        return signal_type, spot_price, current_time
+        return signal_type, spot_price, price_change, p_change_str, p_change_pct_str, current_time
 
     except Exception as e:
         print("Analysis Error:", e)
-        return "WAIT / NO TRADE", 0.0, ""
+        return "WAIT / NO TRADE", 0.0, 0.0, "+0.00", "+0.00%", ""
 
 def background_scanner():
     while True:
@@ -104,10 +111,13 @@ threading.Thread(target=background_scanner, daemon=True).start()
 @app.route('/')
 def index():
     try:
-        signal_type, spot_price, current_time = analyze_market()
+        signal_type, spot_price, price_change, p_change_str, p_change_pct_str, current_time = analyze_market()
         return render_template('index.html', 
                                spot_price=spot_price,
                                signal_type=signal_type,
+                               price_change=price_change,
+                               price_change_formatted=p_change_str,
+                               price_change_pct_formatted=p_change_pct_str,
                                current_time=current_time)
     except Exception as e:
         return f"App Loading... Please refresh. (Error: {str(e)})"
