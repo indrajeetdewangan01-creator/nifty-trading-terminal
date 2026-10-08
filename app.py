@@ -34,19 +34,30 @@ def analyze_market():
         ticker = "^NSEI"
         data = yf.download(ticker, period="1d", interval="1m", progress=False)
         
-        if data.empty or len(data) < 3:
+        if data is None or data.empty or len(data) < 3:
             return "WAIT / NO TRADE", 0.0, ""
 
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
 
-        # Last 3 candles analysis for 1-minute timeframe
-        c1_open, c1_close = data['Open'].iloc[-3], data['Close'].iloc[-3]
-        c2_open, c2_close, c2_high, c2_low = data['Open'].iloc[-2], data['Close'].iloc[-2], data['High'].iloc[-2], data['Low'].iloc[-2]
-        c3_open, c3_close = data['Open'].iloc[-1], data['Close'].iloc[-1]
+        # Ensure required columns exist
+        required_cols = ['Open', 'High', 'Low', 'Close']
+        if not all(col in data.columns for col in required_cols):
+            return "WAIT / NO TRADE", 0.0, ""
+
+        c1_open = float(data['Open'].iloc[-3])
+        c1_close = float(data['Close'].iloc[-3])
+        
+        c2_open = float(data['Open'].iloc[-2])
+        c2_close = float(data['Close'].iloc[-2])
+        c2_high = float(data['High'].iloc[-2])
+        c2_low = float(data['Low'].iloc[-2])
+        
+        c3_open = float(data['Open'].iloc[-1])
+        c3_close = float(data['Close'].iloc[-1])
         
         current_time = str(data.index[-1])
-        spot_price = float(c3_close)
+        spot_price = c3_close
 
         # 1. Bearish Pattern: Red -> Green -> Red (Below Green Low)
         is_bear_c1 = c1_close < c1_open
@@ -81,23 +92,25 @@ def analyze_market():
 
     except Exception as e:
         print("Analysis Error:", e)
-        return "ERROR", 0.0, ""
+        return "WAIT / NO TRADE", 0.0, ""
 
 def background_scanner():
     while True:
         analyze_market()
-        time.sleep(60) # Har 1 minute mein automatic check karega
+        time.sleep(60)
 
-# Background thread jo bina site khole background mein chalta rahega
 threading.Thread(target=background_scanner, daemon=True).start()
 
 @app.route('/')
 def index():
-    signal_type, spot_price, current_time = analyze_market()
-    return render_template('index.html', 
-                           spot_price=spot_price,
-                           signal_type=signal_type,
-                           current_time=current_time)
+    try:
+        signal_type, spot_price, current_time = analyze_market()
+        return render_template('index.html', 
+                               spot_price=spot_price,
+                               signal_type=signal_type,
+                               current_time=current_time)
+    except Exception as e:
+        return f"App Loading... Please refresh. (Error: {str(e)})"
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
