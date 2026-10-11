@@ -19,16 +19,19 @@ def send_telegram_alert(message):
             "parse_mode": "Markdown"
         }
         try:
-            requests.post(url, json=payload, timeout=5)
+            response = requests.post(url, json=payload, timeout=5)
+            print(f"Telegram API Response Status: {response.status_code}")
+            print(f"Telegram API Response Body: {response.text}")
         except Exception as e:
-            print(f"Telegram Alert Error: {e}")
+            print(f"Telegram Alert Exception: {e}")
 
 def fetch_market_data(ticker="^NSEI"):
     try:
-        # Using 5m instead of unsupported 3m interval
+        # Fetching intraday data (5m and 15m) with auto_adjust
         df_15m = yf.download(ticker, period="5d", interval="15m", progress=False, auto_adjust=True)
         df_5m  = yf.download(ticker, period="2d", interval="5m", progress=False, auto_adjust=True)
         
+        # Fallback for weekends / closed market when intraday is empty
         if df_15m is None or df_5m is None or df_15m.empty or df_5m.empty:
             df_daily = yf.download(ticker, period="10d", interval="1d", progress=False, auto_adjust=True)
             return df_daily, df_daily
@@ -92,6 +95,18 @@ def analyze_institutional_engine():
         signal = "INSTITUTIONAL SELL 📉"
         sl = round(close_5m + 50, 2)
         target = round(close_5m - 100, 2)
+
+    # Trigger Telegram Alert if signal is active
+    if signal:
+        msg = (
+            f"🚨 *NIFTY 50 INSTITUTIONAL SIGNAL* 🚨\n\n"
+            f"⚡ *Signal:* `{signal}`\n"
+            f"📊 *Entry Price:* `{close_5m:.2f}`\n"
+            f"🛡️ *Stop Loss:* `{sl}`\n"
+            f"🎯 *Target (1:2):* `{target}`\n\n"
+            f"🔍 *Filter Check:* 15m Trend: `{htf_trend}` | Volume Spike: `Confirmed`"
+        )
+        send_telegram_alert(msg)
 
     return {
         "price": close_5m,
