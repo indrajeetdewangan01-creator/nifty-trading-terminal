@@ -2,20 +2,114 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Nifty 1M Pattern Scanner</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nifty Institutional Trading Terminal</title>
     <style>
-        body { font-family: Arial, sans-serif; background: #121212; color: #fff; text-align: center; padding-top: 50px; }
-        .card { background: #1e1e1e; padding: 30px; border-radius: 10px; display: inline-block; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
-        .signal { font-size: 24px; font-weight: bold; margin: 20px 0; color: #00ffcc; }
-        .price { font-size: 20px; color: #ffcc00; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            background: #121212; 
+            color: #ffffff; 
+            text-align: center; 
+            padding-top: 40px; 
+            margin: 0;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        .card { 
+            background: #1e1e1e; 
+            padding: 30px; 
+            border-radius: 12px; 
+            box-shadow: 0 4px 20px rgba(0,0,0,0.6); 
+            border: 1px solid #333;
+        }
+        h1 { margin-bottom: 20px; font-size: 24px; color: #4db8ff; }
+        .price { font-size: 32px; color: #ffcc00; font-weight: bold; margin: 15px 0; }
+        .signal { 
+            font-size: 20px; 
+            font-weight: bold; 
+            margin: 20px 0; 
+            padding: 12px; 
+            border-radius: 6px; 
+            background: #2a2a2a;
+        }
+        .details { 
+            text-align: left; 
+            margin-top: 20px; 
+            font-size: 15px; 
+            line-height: 1.8; 
+            background: #181818; 
+            padding: 15px; 
+            border-radius: 6px; 
+        }
+        .badge { font-weight: bold; color: #00ffcc; }
+        .btn {
+            background: #008cba;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            font-size: 14px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-top: 15px;
+        }
+        .btn:hover { background: #007399; }
     </style>
 </head>
 <body>
-    <div class="card">
-        <h1>Nifty 1-Minute Pattern Terminal</h1>
-        <div class="price">Spot Price: ₹{{ spot_price }} ({{ price_change_formatted }} | {{ price_change_pct_formatted }})</div>
-        <div class="signal">Signal: {{ signal_type }}</div>
-        <p>Last Updated: {{ current_time }}</p>
+    <div class="container">
+        <div class="card">
+            <h1>Nifty 50 Institutional Engine</h1>
+            
+            <div class="price">Spot Price: ₹<span id="price">Fetching...</span></div>
+            
+            <div class="signal" id="signal-box">Signal Status: Loading...</div>
+
+            <div class="details">
+                <p>📈 <strong>15m Higher Trend:</strong> <span id="htf-trend" class="badge">-</span></p>
+                <p>📊 <strong>Volume Spike (3m):</strong> <span id="vol-spike" class="badge">-</span></p>
+                <p>🛡️ <strong>Stop Loss Level:</strong> ₹<span id="sl">-</span></p>
+                <p>🎯 <strong>Target Level (1:2):</strong> ₹<span id="target">-</span></p>
+            </div>
+
+            <button class="btn" onclick="fetchStatus()">Refresh Market Status</button>
+            <p style="font-size: 12px; color: #888; margin-top: 15px;">Auto-checks market alignment via API</p>
+        </div>
     </div>
+
+    <script>
+        async function fetchStatus() {
+            try {
+                const response = await fetch('/api/status');
+                const data = await response.json();
+
+                document.getElementById('price').innerText = data.price ? data.price.toFixed(2) : 'N/A';
+                document.getElementById('htf-trend').innerText = data.htf_trend || 'N/A';
+                document.getElementById('vol-spike').innerText = data.volume_spike || 'N/A';
+                document.getElementById('sl').innerText = data.stop_loss ? data.stop_loss : '-';
+                document.getElementById('target').innerText = data.target ? data.target : '-';
+
+                const signalBox = document.getElementById('signal-box');
+                signalBox.innerText = data.signal || 'NO SIGNAL';
+
+                if (data.signal && data.signal.includes('BUY')) {
+                    signalBox.style.color = '#00ff7f';
+                    signalBox.style.border = '1px solid #00ff7f';
+                } else if (data.signal && data.signal.includes('SELL')) {
+                    signalBox.style.color = '#ff4d4d';
+                    signalBox.style.border = '1px solid #ff4d4d';
+                } else {
+                    signalBox.style.color = '#ffcc00';
+                    signalBox.style.border = '1px solid #ffcc00';
+                }
+            } catch (err) {
+                console.error("Error fetching market data:", err);
+            }
+        }
+
+        // Fetch status immediately on page load
+        fetchStatus();
+    </script>
 </body>
 </html>
