@@ -25,70 +25,76 @@ def send_telegram_alert(message):
 
 def fetch_market_data(ticker="^NSEI"):
     try:
-        # Try fetching intraday data
-        df_15m = yf.download(ticker, period="5d", interval="15m", progress=False)
-        df_3m  = yf.download(ticker, period="2d", interval="3m", progress=False)
+        # Using 5m instead of unsupported 3m interval
+        df_15m = yf.download(ticker, period="5d", interval="15m", progress=False, auto_adjust=True)
+        df_5m  = yf.download(ticker, period="2d", interval="5m", progress=False, auto_adjust=True)
         
-        # Fallback for weekends / closed market when intraday is empty
-        if df_15m.empty or df_3m.empty:
-            df_daily = yf.download(ticker, period="10d", interval="1d", progress=False)
+        if df_15m is None or df_5m is None or df_15m.empty or df_5m.empty:
+            df_daily = yf.download(ticker, period="10d", interval="1d", progress=False, auto_adjust=True)
             return df_daily, df_daily
             
-        return df_15m, df_3m
+        return df_15m, df_5m
     except Exception as e:
         print(f"Data Fetch Error: {e}")
         return None, None
 
 def analyze_institutional_engine():
-    df_15m, df_3m = fetch_market_data("^NSEI")
+    df_15m, df_5m = fetch_market_data("^NSEI")
     
-    if df_15m is None or df_3m is None or df_3m.empty:
+    if df_15m is None or df_5m is None or df_5m.empty:
         return {"status": "Error", "message": "Market Data Unavailable"}
 
-    # Handle multi-index columns if returned by yfinance
+    # Properly flatten MultiIndex columns if returned by yfinance
     if isinstance(df_15m.columns, pd.MultiIndex):
-        df_15m.columns = df_15m.columns.get_level_0
-    if isinstance(df_3m.columns, pd.MultiIndex):
-        df_3m.columns = df_3m.columns.get_level_0
+        df_15m.columns = df_15m.columns.get_level_values(0)
+    if isinstance(df_5m.columns, pd.MultiIndex):
+        df_5m.columns = df_5m.columns.get_level_values(0)
 
-    # Extract Close series safely
     close_15m_series = df_15m['Close'].squeeze()
-    close_3m_series = df_3m['Close'].squeeze()
-    vol_3m_series = df_3m['Volume'].squeeze()
+    close_5m_series = df_5m['Close'].squeeze()
+    vol_5m_series = df_5m['Volume'].squeeze()
 
-    # 1. Higher Timeframe Trend (200 EMA equivalent or simple mean for fallback)
+    # Ensure series format
+    if isinstance(close_15m_series, pd.DataFrame):
+        close_15m_series = close_15m_series.iloc[:, 0]
+    if isinstance(close_5m_series, pd.DataFrame):
+        close_5m_series = close_5m_series.iloc[:, 0]
+    if isinstance(vol_5m_series, pd.DataFrame):
+        vol_5m_series = vol_5m_series.iloc[:, 0]
+
+    # 1. Higher Timeframe Trend (15m EMA)
     ema_15m = close_15m_series.ewm(span=min(200, len(close_15m_series)), adjust=False).mean()
     close_15m = float(close_15m_series.iloc[-1])
     ema_15m_val = float(ema_15m.iloc[-1])
     htf_trend = "BULLISH" if close_15m > ema_15m_val else "BEARISH"
 
-    # 2. Lower Timeframe Execution
-    ema_3m = close_3m_series.ewm(span=min(50, len(close_3m_series)), adjust=False).mean()
-    vol_avg = vol_3m_series.rolling(window=min(20, len(vol_3m_series))).mean()
+    # 2. Lower Timeframe Execution (5m EMA & Volume)
+    ema_5m = close_5m_series.ewm(span=min(50, len(close_5m_series)), adjust=False).mean()
+    vol_avg = vol_5m_series.rolling(window=min(20, len(vol_5m_series))).mean()
     
-    close_3m = float(close_3m_series.iloc[-1])
-    ema_3m_val = float(ema_3m.iloc[-1])
-    vol_3m = float(vol_3m_series.iloc[-1])
+    close_5m = float(close_5m_series.iloc[-1])
+    ema_5m_val = float(ema_5m.iloc[-1])
+    vol_5m = float(vol_5m_series.iloc[-1])
     vol_avg_val = float(vol_avg.iloc[-1]) if not vol_avg.empty else 0
     
-    high_volume = vol_3m > (vol_avg_val * 1.5) if vol_avg_val > 0 else True
+    high_volume = vol_5m > (vol_avg_val * 1.5) if vol_avg_val > 0 else True
 
     # 3. Hard-Lock Gate Logic
     signal = None
     sl = 0.0
     target = 0.0
 
-    if htf_trend == "BULLISH" and close_3m > ema_3m_val and high_volume:
+    if htf_trend == "BULLISH" and close_5m > ema_5m_val and high_volume:
         signal = "INSTITUTIONAL BUY 🚀"
-        sl = round(close_3m - 50, 2)
-        target = round(close_3m + 100, 2)
-    elif htf_trend == "BEARISH" and close_3m < ema_3m_val and high_volume:
+        sl = round(close_5m - 50, 2)
+        target = round(close_5m + 100, 2)
+    elif htf_trend == "BEARISH" and close_5m < ema_5m_val and high_volume:
         signal = "INSTITUTIONAL SELL 📉"
-        sl = round(close_3m + 50, 2)
-        target = round(close_3m - 100, 2)
+        sl = round(close_5m + 50, 2)
+        target = round(close_5m - 100, 2)
 
     return {
-        "price": close_3m,
+        "price": close_5m,
         "htf_trend": htf_trend,
         "signal": signal if signal else "NO SIGNAL (MARKET CONSOLIDATION)",
         "volume_spike": "YES" if high_volume else "NORMAL",
